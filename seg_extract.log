@@ -1,0 +1,22 @@
+nohup: ignoring input
+ovary_prime_he: патчей 4000
+грузим H&E...
+device: cpu | кодируем через UNI...
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+saved data/processed/seg/ovary_prime_he_feat.npz  X=(4000, 196, 1024) y=(4000, 112, 112)
+пиксели: {0: 28684093, 1: 9977252, 2: 11514655}
+ovary2_he: патчей 4000
+грузим H&E...
+device: cpu | кодируем через UNI...
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+saved data/processed/seg/ovary2_he_feat.npz  X=(4000, 196, 1024) y=(4000, 112, 112)
+пиксели: {0: 24914851, 1: 14611527, 2: 10649622}
+ovary3_he: патчей 4000
+грузим H&E...
+device: cpu | кодируем через UNI...
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+saved data/processed/seg/ovary3_he_feat.npz  X=(4000, 196, 1024) y=(4000, 112, 112)
+пиксели: {0: 25851809, 1: 21120726, 2: 3203465}

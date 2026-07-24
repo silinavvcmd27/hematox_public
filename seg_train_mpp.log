@@ -1,0 +1,70 @@
+nohup: ignoring input
+device: cpu | seed: 42 | отбор эпохи: val
+train ['ovary2_he', 'ovary3_he'] -> 7990 патчей | val ovary_prime_he -> 4000
+веса классов (bg/tumor/stroma): 1.59 0.51 0.91
+epoch   1  loss 0.8073  IoU tumor 0.287 stroma 0.426  (mIoU 0.357)
+epoch   2  loss 0.7699  IoU tumor 0.203 stroma 0.463  (mIoU 0.333)
+epoch   3  loss 0.7599  IoU tumor 0.354 stroma 0.465  (mIoU 0.409)
+epoch   4  loss 0.7467  IoU tumor 0.266 stroma 0.439  (mIoU 0.353)
+epoch   5  loss 0.7375  IoU tumor 0.345 stroma 0.415  (mIoU 0.380)
+epoch   6  loss 0.7268  IoU tumor 0.384 stroma 0.437  (mIoU 0.410)
+epoch   7  loss 0.7130  IoU tumor 0.295 stroma 0.474  (mIoU 0.384)
+epoch   8  loss 0.6960  IoU tumor 0.285 stroma 0.430  (mIoU 0.357)
+epoch   9  loss 0.6802  IoU tumor 0.399 stroma 0.410  (mIoU 0.404)
+epoch  10  loss 0.6608  IoU tumor 0.269 stroma 0.402  (mIoU 0.336)
+epoch  11  loss 0.6404  IoU tumor 0.285 stroma 0.458  (mIoU 0.371)
+epoch  12  loss 0.6219  IoU tumor 0.323 stroma 0.321  (mIoU 0.322)
+epoch  13  loss 0.5983  IoU tumor 0.322 stroma 0.398  (mIoU 0.360)
+epoch  14  loss 0.5775  IoU tumor 0.378 stroma 0.386  (mIoU 0.382)
+ранняя остановка на эпохе 14 | лучший mIoU 0.410
+
+=== val ovary_prime_he ===
+  tumor   IoU 0.384  Dice 0.554
+  stroma  IoU 0.437  Dice 0.608
+метрики дописаны в outputs/results/seg_metrics_mpp.csv
+истина | предсказание: outputs/results/seg_ovary_prime_he_val_preview.png
+device: cpu | seed: 42 | отбор эпохи: val
+train ['ovary_prime_he', 'ovary3_he'] -> 7990 патчей | val ovary2_he -> 4000
+веса классов (bg/tumor/stroma): 1.29 0.72 0.98
+epoch   1  loss 0.6794  IoU tumor 0.531 stroma 0.130  (mIoU 0.330)
+epoch   2  loss 0.6322  IoU tumor 0.596 stroma 0.423  (mIoU 0.510)
+epoch   3  loss 0.6196  IoU tumor 0.568 stroma 0.375  (mIoU 0.472)
+epoch   4  loss 0.6102  IoU tumor 0.566 stroma 0.310  (mIoU 0.438)
+epoch   5  loss 0.6010  IoU tumor 0.505 stroma 0.160  (mIoU 0.333)
+epoch   6  loss 0.5922  IoU tumor 0.600 stroma 0.360  (mIoU 0.480)
+epoch   7  loss 0.5828  IoU tumor 0.455 stroma 0.226  (mIoU 0.341)
+epoch   8  loss 0.5671  IoU tumor 0.517 stroma 0.255  (mIoU 0.386)
+epoch   9  loss 0.5566  IoU tumor 0.463 stroma 0.341  (mIoU 0.402)
+epoch  10  loss 0.5407  IoU tumor 0.443 stroma 0.239  (mIoU 0.341)
+ранняя остановка на эпохе 10 | лучший mIoU 0.510
+
+=== val ovary2_he ===
+  tumor   IoU 0.596  Dice 0.747
+  stroma  IoU 0.423  Dice 0.595
+метрики дописаны в outputs/results/seg_metrics_mpp.csv
+истина | предсказание: outputs/results/seg_ovary2_he_val_preview.png
+device: cpu | seed: 42 | отбор эпохи: val
+train ['ovary_prime_he', 'ovary2_he'] -> 8000 патчей | val ovary3_he -> 3990
+веса классов (bg/tumor/stroma): 1.42 0.93 0.66
+epoch   1  loss 0.4514  IoU tumor 0.436 stroma 0.080  (mIoU 0.258)
+epoch   2  loss 0.3808  IoU tumor 0.436 stroma 0.085  (mIoU 0.261)
+epoch   3  loss 0.3603  IoU tumor 0.447 stroma 0.084  (mIoU 0.266)
+epoch   4  loss 0.3495  IoU tumor 0.436 stroma 0.086  (mIoU 0.261)
+epoch   5  loss 0.3340  IoU tumor 0.446 stroma 0.082  (mIoU 0.264)
+epoch   6  loss 0.3241  IoU tumor 0.429 stroma 0.086  (mIoU 0.257)
+epoch   7  loss 0.3094  IoU tumor 0.451 stroma 0.084  (mIoU 0.268)
+epoch   8  loss 0.2982  IoU tumor 0.430 stroma 0.091  (mIoU 0.261)
+epoch   9  loss 0.2867  IoU tumor 0.436 stroma 0.084  (mIoU 0.260)
+epoch  10  loss 0.2782  IoU tumor 0.443 stroma 0.084  (mIoU 0.264)
+epoch  11  loss 0.2630  IoU tumor 0.442 stroma 0.082  (mIoU 0.262)
+epoch  12  loss 0.2521  IoU tumor 0.429 stroma 0.087  (mIoU 0.258)
+epoch  13  loss 0.2433  IoU tumor 0.438 stroma 0.086  (mIoU 0.262)
+epoch  14  loss 0.2342  IoU tumor 0.443 stroma 0.084  (mIoU 0.264)
+epoch  15  loss 0.2265  IoU tumor 0.431 stroma 0.088  (mIoU 0.259)
+ранняя остановка на эпохе 15 | лучший mIoU 0.268
+
+=== val ovary3_he ===
+  tumor   IoU 0.451  Dice 0.622
+  stroma  IoU 0.084  Dice 0.155
+метрики дописаны в outputs/results/seg_metrics_mpp.csv
+истина | предсказание: outputs/results/seg_ovary3_he_val_preview.png

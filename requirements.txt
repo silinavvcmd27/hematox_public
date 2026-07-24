@@ -1,0 +1,31 @@
+# Зависимости пиксельной и патчевой веток.
+
+numpy
+pandas
+scipy                 
+pyyaml
+scikit-learn
+Pillow
+
+# изображения и WSI
+opencv-python-headless
+tifffile
+openslide-python     
+
+# модель
+torch>=2.1
+torchvision>=0.16
+timm>=0.9.16          # грузит UNI/UNI2
+huggingface_hub>=0.23
+torch-geometric>=2.5
+
+matplotlib
+
+# только для prep_sthelar.py — сборка базы STHELAR
+datasets
+
+# только для download_demo.py
+h5py
+anndata
+
+# CONCH как альтернативный кодировщик ставится отдельно, из репозитория авторов

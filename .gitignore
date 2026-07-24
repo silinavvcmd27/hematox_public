@@ -1,0 +1,15 @@
+/data/
+__pycache__/
+*.pyc
+
+# Тяжёлые файлы результатов — не загружаем на GitHub
+outputs/results/*.png
+outputs/results/*.npz
+outputs/results/TCGA-*
+
+# Модели тоже исключаем (все .pth файлы)
+*.pth
+
+# Исключения (маленькие важные файлы)
+!outputs/results/*.csv
+!outputs/results/tcga_km_tsp.png

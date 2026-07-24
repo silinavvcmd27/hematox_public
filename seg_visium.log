@@ -1,0 +1,10 @@
+nohup: ignoring input
+device: cpu
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+грузим H&E...
+размер: 13772 x 12681
+  патчей: 64  патчей: 128  патчей: 192  патчей: 256  патчей: 320  патчей: 384  патчей: 448  патчей: 512  патчей: 576  патчей: 640  патчей: 704  патчей: 768  патчей: 832  патчей: 896  патчей: 960  патчей: 1024  патчей: 1088  патчей: 1152  патчей: 1216  патчей: 1280  патчей: 1344  патчей: 1408  патчей: 1416
+всего патчей: 1416
+TSP: tumor 15.0%  stroma 85.0%
+карта зон: outputs/results/visium_ffpe_ov_seg_map.png

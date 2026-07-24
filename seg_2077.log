@@ -1,0 +1,14 @@
+nohup: ignoring input
+device: cpu
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+Traceback (most recent call last):
+  File "/home/vikitosha/hematox_spatial/seg_infer_svs.py", line 125, in <module>
+    main()
+  File "/home/vikitosha/hematox_spatial/seg_infer_svs.py", line 62, in main
+    sl = openslide.OpenSlide(args.svs)
+  File "/home/vikitosha/miniconda3/envs/hematox/lib/python3.10/site-packages/openslide/__init__.py", line 206, in __init__
+    self._osr = lowlevel.open(filename)
+  File "/home/vikitosha/miniconda3/envs/hematox/lib/python3.10/site-packages/openslide/lowlevel.py", line 253, in _check_open
+    raise OpenSlideUnsupportedFormatError('Unsupported or missing image file')
+openslide.lowlevel.OpenSlideUnsupportedFormatError: Unsupported or missing image file

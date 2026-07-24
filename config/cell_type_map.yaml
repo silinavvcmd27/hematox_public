@@ -1,0 +1,41 @@
+# Annotation_main_types_new -> tumor/stroma/undefined
+match_mode: exact
+case_insensitive: true
+
+groups:
+  tumor:
+    - Cancer cells
+
+  stroma:
+    - CAFs
+    - NFs
+    - Fibroblasts
+    - EC cells tumor
+    - EC cells normal
+    - Endo
+    - Endothelial cells
+    - Lymphatic endothelial cells
+    - Pery tumor
+    - Pery normal
+    - Perycites
+    - Pericytes
+    - SMC
+    - T cells
+    - B cells
+    - NK
+    - Lymph
+    - Lymphoid cells
+    - Plasma cells
+    - Plasma
+    - Myeloid cells
+    - Mye
+    - DC
+    - Mast cells
+
+  undefined:
+    - Ciliated epithelial cells
+    - Fallopian tube epithelium
+    - Granulosa cells
+    - Mesothelial cells
+
+unmapped_policy: undefined

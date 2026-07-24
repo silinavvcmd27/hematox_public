@@ -1,0 +1,22 @@
+nohup: ignoring input
+срезы: ['breast_s0', 'cervix_s0', 'colon_s1', 'kidney_s1', 'liver_s1', 'lung_s1', 'pancreatic_s0', 'prostate_s0', 'skin_s2']
+качаю overview-таблицу ...
+патчей с метками в overview: 45678
+распределение по меткам: {'stroma': 23228, 'tumor': 18190, 'undefined': 4260}
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+device: cpu
+Some datasets params were ignored: ['splits', 'download_size', 'dataset_size']. Make sure to use only valid params for the dataset builder and to have a up-to-date version of the `datasets` library.
+'The read operation timed out' thrown while requesting GET https://huggingface.co/datasets/FelicieGS/STHELAR_20x/resolve/a01e22cdb7368edf595edf6150d0ac57deb5e548/data/train-00008-of-00018.parquet
+Retrying in 1s [Retry 1/5].
+  breast_s0: 2000 патчей -> {'tumor': 1179, 'stroma': 709, 'undefined': 112} -> sthelar_breast_s0.npz
+  cervix_s0: 2000 патчей -> {'tumor': 555, 'stroma': 981, 'undefined': 464} -> sthelar_cervix_s0.npz
+  colon_s1: 2000 патчей -> {'tumor': 791, 'stroma': 1201, 'undefined': 8} -> sthelar_colon_s1.npz
+  kidney_s1: 1244 патчей -> {'tumor': 86, 'stroma': 1152, 'undefined': 6} -> sthelar_kidney_s1.npz
+  liver_s1: 2000 патчей -> {'tumor': 916, 'stroma': 1080, 'undefined': 4} -> sthelar_liver_s1.npz
+  lung_s1: 2000 патчей -> {'tumor': 287, 'stroma': 1538, 'undefined': 175} -> sthelar_lung_s1.npz
+  pancreatic_s0: 2000 патчей -> {'tumor': 874, 'stroma': 950, 'undefined': 176} -> sthelar_pancreatic_s0.npz
+  prostate_s0: 2000 патчей -> {'tumor': 790, 'stroma': 759, 'undefined': 451} -> sthelar_prostate_s0.npz
+  skin_s2: 2000 патчей -> {'tumor': 131, 'stroma': 997, 'undefined': 872} -> sthelar_skin_s2.npz
+
+готово. теперь: python -m src.train

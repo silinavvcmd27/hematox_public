@@ -1,0 +1,4 @@
+slide,rds,image,alignment
+ovary_prime_he,,data/raw/ovary_prime/Xenium_Prime_Ovarian_Cancer_FFPE_XRrun_he_image.ome.tif,data/raw/ovary_prime/Xenium_Prime_Ovarian_Cancer_FFPE_XRrun_he_imagealignment.csv
+ovary2_he,,data/raw/ovary2/Xenium_Prime_Human_Ovary_FF_he_image.ome.tif,data/raw/ovary2/Xenium_Prime_Human_Ovary_FF_he_imagealignment.csv
+ovary3_he,,data/raw/ovary3/Xenium_V1_Human_Ovary_Cancer_FF_he_image.ome.tif,data/raw/ovary3/Xenium_V1_Human_Ovary_Cancer_FF_he_imagealignment.csv

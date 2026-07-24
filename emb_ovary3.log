@@ -1,0 +1,8 @@
+nohup: ignoring input
+Note: Environment variable`HF_TOKEN` is set and is the current active token independently from the token you've just configured.
+logged in to huggingface
+device: cpu
+ovary3_he: грузим data/raw/ovary3/Xenium_V1_Human_Ovary_Cancer_FF_he_image.ome.tif
+ovary3_he: image (57040, 51442, 3), патчей 20297
+ovary3_he: кодируем 20297 патчей (uni)...
+ovary3_he: saved data/processed/embeddings/ovary3_he.npz  X=(20297, 1024)

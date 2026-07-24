@@ -1,0 +1,4 @@
+val_slide,select,seed,epochs_run,tumor_iou,tumor_dice,stroma_iou,stroma_dice,model
+ovary_prime_he,val,42,14,0.3835,0.5544,0.4366,0.6078,outputs/models/seg_mpp_ovary_prime_he.pth
+ovary2_he,val,42,10,0.5962,0.7471,0.4231,0.5946,outputs/models/seg_mpp_ovary2_he.pth
+ovary3_he,val,42,15,0.4514,0.622,0.0841,0.1551,outputs/models/seg_mpp_ovary3_he.pth

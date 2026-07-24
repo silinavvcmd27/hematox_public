@@ -1,0 +1,9 @@
+slide,model,stride,tsp_pred,tsp_true,scope,accuracy,tumor_iou,tumor_dice,stroma_iou,stroma_dice
+ovary_prime_he,outputs/models/seg_val_ovary_prime_he.pth,512,69.04,67.59,весь срез,0.5936,0.1657,0.2843,0.1502,0.2611
+ovary_prime_he,outputs/models/seg_val_ovary_prime_he.pth,512,69.04,67.59,внутри разметки,0.1613,0.1679,0.2876,0.1535,0.2662
+ovary_prime_he,outputs/models/seg_val_ovary_prime_he.pth,512,69.04,67.64,покрытое окном,0.7174,0.6249,0.7691,0.5294,0.6923
+ovary_prime_he,outputs/models/seg_val_ovary_prime_he.pth,512,69.04,67.64,внутри разметки,0.6484,0.6576,0.7934,0.5736,0.729
+ovary2_he,outputs/models/seg_val_ovary2_he.pth,512,37.22,50.13,покрытое окном,0.7303,0.6732,0.8047,0.5266,0.6899
+ovary2_he,outputs/models/seg_val_ovary2_he.pth,512,37.22,50.13,внутри разметки,0.7761,0.7098,0.8303,0.5904,0.7425
+ovary3_he,outputs/models/seg_val_ovary3_he.pth,512,5.89,19.69,покрытое окном,0.4641,0.412,0.5836,0.0297,0.0577
+ovary3_he,outputs/models/seg_val_ovary3_he.pth,512,5.89,19.69,внутри разметки,0.5173,0.5486,0.7085,0.0323,0.0626

@@ -1,0 +1,53 @@
+# конфиг пайплайна: UNI (заморожен) + лёгкая голова, классы tumor/stroma/undefined
+
+project:
+  name: hematox_spatial
+  classes: [tumor, stroma, undefined]   # индексы 0,1,2
+  seed: 42
+  
+#Пути
+paths:
+  raw_dir: data/raw                 # H&E + spatial
+  seurat_export_dir: data/seurat_csv
+  processed_dir: data/processed
+  models_dir: outputs/models
+  results_dir: outputs/results
+
+patching:
+  patch_size: 256
+  level: hires                      # hires | fullres
+  majority_threshold: 0.50          # доля клеток одного класса, чтобы дать патчу метку
+  min_cells_per_patch: 3            # патчи с меньшим числом клеток выкидываем
+  
+#Модель
+encoder:
+  name: uni                         # uni | uni2 | conch
+  hf_model: MahmoodLab/UNI          # UNI2: MahmoodLab/UNI2-h
+  embed_dim: 1024                   # UNI=1024, UNI2-h=1536, CONCH=512
+  hf_token_env: HF_TOKEN
+  batch_size: 64
+  norm_mean: [0.485, 0.456, 0.406]  # imagenet, UNI на ней обучали
+  norm_std: [0.229, 0.224, 0.225]
+
+graph:
+  mode: knn                         # knn | radius
+  k: 6
+  radius_patches: 1.5               # для radius
+
+train:
+  head: graphsage                  
+  hidden_dim: 256
+  num_layers: 2
+  dropout: 0.3
+  lr: 0.001
+  weight_decay: 0.0001
+  epochs: 60
+  early_stop_patience: 10
+  class_weights: balanced           # balanced | none | [w0,w1,w2]
+  val_fraction: 0.2                 # разделение по слайдам
+
+finetune:
+  freeze_encoder: true
+  freeze_graph_layer1: true
+  lr: 0.0005
+  epochs: 30

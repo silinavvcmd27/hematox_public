@@ -1,0 +1,29 @@
+# conda env для проекта. создать: conda env create -f environment.yml
+# Сервер без GPU, поэтому torch берётся из CPU-индекса PyTorch.
+name: hematox
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - openslide
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==2.12.1+cpu
+      - torchvision
+      - numpy
+      - pandas
+      - scipy
+      - pyyaml
+      - scikit-learn
+      - Pillow
+      - opencv-python-headless
+      - tifffile
+      - openslide-python
+      - timm>=0.9.16
+      - huggingface_hub>=0.23
+      - torch-geometric>=2.5
+      - matplotlib
+      - datasets      # только для prep_sthelar.py
+      - h5py          # только для download_demo.py
+      - anndata       # только для download_demo.py
