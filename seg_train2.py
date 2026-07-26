@@ -15,11 +15,38 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from src.utils import get_device, ensure_dir, set_seed
+from src.utils import (get_device, ensure_dir, set_seed, TRAIN_CLASSES,
+                       CLASS_NAMES, N_CLASSES, IGNORE)
 from seg_decoder import SegDecoder
 
 COL = np.array([[245, 245, 245], [220, 50, 47], [38, 139, 210]], np.uint8)
-CLASSES = (("tumor", 0), ("stroma", 1))
+# Каналы сети и их соответствие классам проекта. Порядок берётся из
+# src/utils.TRAIN_CLASSES и пишется в чекпоинт: раньше инференс угадывал
+# соответствие по числу каналов, и с пятью классами угадывание сломалось бы, а
+# перепутанные опухоль и строма дают правдоподобное, но неверное TSR.
+CHANNEL_TO_CLASS = {i: c for i, c in enumerate(TRAIN_CLASSES)}
+CLASS_TO_CHANNEL = {c: i for i, c in CHANNEL_TO_CLASS.items()}
+CLASSES = tuple((CLASS_NAMES[c], i) for i, c in CHANNEL_TO_CLASS.items())
+IGNORE_TARGET = -100        # значение ignore_index у CrossEntropyLoss
+
+
+def mask_to_target(mask):
+    """Метки маски -> индексы каналов сети. IGNORE -> IGNORE_TARGET.
+
+    БЫЛО: yb = ... - 1. Это подгонка под прежнюю нумерацию, где классов было
+    два. С IGNORE = 255 вычитание единицы даёт метку 254, и обучение либо
+    падает, либо считает мусор.
+    """
+    out = np.full(mask.shape, IGNORE_TARGET, np.int64)
+    for cls, ch in CLASS_TO_CHANNEL.items():
+        out[mask == cls] = ch
+    unknown = ~np.isin(mask, list(CLASS_TO_CHANNEL) + [IGNORE])
+    if unknown.any():
+        raise ValueError(
+            "в маске значения, которых нет ни в TRAIN_CLASSES, ни IGNORE: "
+            f"{np.unique(mask[unknown]).tolist()}. "
+            "Пересоберите маски обновлённым make_seg_masks_v.py")
+    return out
 
 
 def load_slide(seg_dir, slide):
@@ -43,8 +70,8 @@ def evaluate(model, X, y, device, bs=32):
         preds.append(model(xb).argmax(1).cpu().numpy())
     pred = np.concatenate(preds, 0)
 
-    labeled = y > 0
-    truth = y.astype(np.int16) - 1
+    truth = mask_to_target(y)
+    labeled = truth != IGNORE_TARGET
     out = {}
     for nm, c in CLASSES:
         p = (pred == c) & labeled
@@ -115,20 +142,24 @@ def main():
     print(f"размечено {100*lab:.1f}% пикселей | веса (опухоль/строма): "
           f"{w[0]:.2f} {w[1]:.2f}")
 
-    model = SegDecoder(in_dim=Xtr.shape[-1], n_classes=2).to(device)
+    model = SegDecoder(in_dim=Xtr.shape[-1], n_classes=N_CLASSES).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    crit = nn.CrossEntropyLoss(weight=w.to(device), ignore_index=-1)
+    crit = nn.CrossEntropyLoss(weight=w.to(device), ignore_index=IGNORE_TARGET)
 
     n = len(Xtr)
+    # Свой генератор: set_seed задаёт глобальное состояние numpy, но любой
+    # вызов np.random в другом месте сдвинет последовательность, и прогон
+    # не повторится.
+    rng = np.random.default_rng(args.seed)
     best, best_state, bad, epochs_run = -1, None, 0, args.epochs
     for ep in range(1, args.epochs + 1):
         model.train()
-        perm = np.random.permutation(n)
+        perm = rng.permutation(n)
         run, nb = 0.0, 0
         for i in range(0, n, args.bs):
             j = perm[i:i + args.bs]
             xb = torch.tensor(Xtr[j].astype(np.float32)).to(device)
-            yb = torch.tensor(ytr[j].astype(np.int64)).to(device) - 1
+            yb = torch.from_numpy(mask_to_target(ytr[j])).to(device)
             opt.zero_grad()
             loss = crit(model(xb), yb)
             loss.backward()
@@ -137,9 +168,15 @@ def main():
             nb += 1
 
         _, m = evaluate(model, Xva, yva, device)
-        miou = np.nanmean([m["tumor"][0], m["stroma"][0]])
-        print("epoch %3d  loss %.4f  IoU tumor %.3f stroma %.3f  (mIoU %.3f)"
-              % (ep, run / nb, m["tumor"][0], m["stroma"][0], miou))
+        # Среднее только по классам, которые есть в отложенном срезе: иначе
+        # отсутствующий класс даёт nan и портит выбор лучшей эпохи.
+        present = [CLASS_NAMES[c] for c in TRAIN_CLASSES
+                   if c != 0 and (yva == c).sum() > 0]
+        vals = [m[nm][0] for nm in present if nm in m and not np.isnan(m[nm][0])]
+        miou = float(np.mean(vals)) if vals else float("nan")
+        per = "  ".join(f"{nm} {m[nm][0]:.3f}" for nm in present if nm in m)
+        print("epoch %3d  loss %.4f  IoU: %s  (mIoU %.3f)"
+              % (ep, run / nb, per, miou))
 
         if args.select != "val":
             continue
@@ -156,7 +193,12 @@ def main():
     if best_state:
         model.load_state_dict(best_state)
     ensure_dir(Path(args.out).parent)
-    torch.save({"state_dict": model.state_dict(), "n_classes": 2}, args.out)
+    torch.save({"state_dict": model.state_dict(),
+                "n_classes": N_CLASSES,
+                "channel_to_class": CHANNEL_TO_CLASS,
+                "class_names": CLASS_NAMES,
+                "val_slide": args.val,
+                "seed": args.seed}, args.out)
 
     pred, m = evaluate(model, Xva, yva, device)
     print("\n=== val %s ===" % args.val)

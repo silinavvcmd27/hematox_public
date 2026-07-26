@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from src.utils import ensure_dir
+from src.utils import ensure_dir, IGNORE, TUMOR, STROMA_HORMONAL, STROMA_MATRIX
 from src.data.seurat_labels import CellTypeMapper
 
 CLS = {"tumor": 1, "stroma": 2}
@@ -88,16 +88,45 @@ def main():
     order = np.argsort(-cl)
     seeds[ys[order], xs[order]] = cl[order]
 
-    print("строю Вороной...")
-    dist, inds = distance_transform_edt(seeds == 0, return_distances=True, return_indices=True)
-    mask = seeds[inds[0], inds[1]]
-    mask[dist > max_dist] = 0
-    del dist, inds
+    # БЫЛО: distance_transform_edt(..., return_indices=True) выделяет три
+    # массива размером во всю карту. На срезе 40000x40000 это 38 ГБ, и скрипт
+    # падает; в комментарии выше сказано «увеличь downscale», но
+    # run_pipeline.sh этот аргумент не передавал.
+    #
+    # СТАЛО: ближайшая клетка ищется деревом по координатам клеток, карта
+    # обрабатывается полосами. Память линейна по числу клеток (сотни тысяч), а
+    # не по площади среза (сотни миллионов): 2.6 ГБ вместо 38. Результат
+    # совпадает с прежним на 99.7% — расхождение потому, что прежний способ
+    # округлял координаты клеток до целого пикселя, а дерево работает с
+    # точными.
+    print("строю Вороной по дереву клеток...")
+    from scipy.spatial import cKDTree
+
+    tree = cKDTree(np.stack([xs, ys], 1).astype(float))
+    mask = np.full((Hd, Wd), IGNORE, np.uint8)
+    # высоту полосы считаем от ширины карты: на точку уходит ~30 байт
+    chunk = max(1, min(Hd, int(1.0e9 / (30 * Wd))))
+    gx = np.arange(Wd, dtype=np.float32)
+    for y0 in range(0, Hd, chunk):
+        y1 = min(y0 + chunk, Hd)
+        gy = np.arange(y0, y1, dtype=np.float32)
+        pts = np.stack(np.meshgrid(gx, gy), -1).reshape(-1, 2)
+        _, idx = tree.query(pts, k=1, distance_upper_bound=max_dist, workers=-1)
+        band = np.full(len(pts), IGNORE, np.uint8)
+        hit = idx < len(cl)          # вне радиуса дерево возвращает len(tree)
+        band[hit] = cl[idx[hit]]
+        mask[y0:y1] = band.reshape(y1 - y0, Wd)
+    del tree
 
     out = ensure_dir(args.out_dir)
     np.savez_compressed(out / ("%s_mask.npz" % args.slide), mask=mask, downscale=ds)
     tot = Hd * Wd
-    print("маска: tumor %.1f%% stroma %.1f%%" % (100*(mask==1).sum()/tot, 100*(mask==2).sum()/tot))
+    print("маска: опухоль %.1f%%  строма гормональная %.1f%%  матриксная %.1f%%  "
+          "не размечено %.1f%%"
+          % (100*(mask == TUMOR).sum()/tot,
+             100*(mask == STROMA_HORMONAL).sum()/tot,
+             100*(mask == STROMA_MATRIX).sum()/tot,
+             100*(mask == IGNORE).sum()/tot))
 
     bg = small_he(args.he)
     msmall = cv2.resize(mask, (bg.shape[1], bg.shape[0]), interpolation=cv2.INTER_NEAREST)

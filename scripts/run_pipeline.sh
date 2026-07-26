@@ -19,6 +19,9 @@ PATCH_UM=70          # поле зрения патча; в пиксели пе�
 MAX_PATCHES=12000
 AUGMENT=4            # 4 — повороты, 8 — повороты и отражения
 EPOCHS=40
+MASK_DOWNSCALE=2     # во сколько раз грубее среза строится маска
+STRIDE_FRAC=2        # шаг окна = патч / STRIDE_FRAC; 2 = перекрытие 50%
+MIN_CONF=0.5         # порог уверенности при инференсе
 
 [ -f "$MANIFEST" ] || { echo "нет $MANIFEST"; exit 1; }
 
@@ -49,17 +52,30 @@ cells=()
 for s in "${slides[@]}"; do cells+=("$CSV_DIR/${s}_cells.csv"); done
 python -m src.data.seurat_labels --cells "${cells[@]}"
 
+# Проверка: разделяются ли два типа стромы по маркерам. Если нет — метки будут
+# шумом, и учить модель бессмысленно. Смотреть outputs/results/stroma_split_*.png
+for s in "${slides[@]}"; do
+    [ -f "$CSV_DIR/${s}_expr.csv" ] || {
+        echo "$s: нет ${s}_expr.csv — перезапустите Rscript R/export_seurat.R"; exit 1; }
+    python check_stroma_split.py --cells "$CSV_DIR/${s}_cells.csv" \
+        --expr "$CSV_DIR/${s}_expr.csv" \
+        --out "outputs/results/stroma_split_${s}" || exit 1
+done
+echo "!! посмотрите outputs/results/stroma_split_*.png прежде чем учить модель"
+
 # Маски и признаки — самая долгая часть, около часа на срез
 while IFS=, read -r slide rds image alignment; do
     [ "$slide" = "slide" ] && continue
     [ -z "$slide" ] && continue
 
-    ps=$(python slide_mpp.py --he "$image" --um "$PATCH_UM" --quiet)
+    ps=$(python -c "from src.utils import patch_px_for_um; print(patch_px_for_um('$image', $PATCH_UM))") \
+        || { echo "$slide: не удалось определить мкм/px в $image"; exit 1; }
     echo "== $slide: патч $PATCH_UM мкм = $ps px"
 
     [ -f "$SEG_DIR/${slide}_mask.npz" ] || python -u make_seg_masks_v.py \
         --slide "$slide" --cells "$CSV_DIR/${slide}_cells.csv" --he "$image" \
-        --patch-size "$ps" --stride "$ps" --out-dir "$SEG_DIR"
+        --patch-size "$ps" --stride "$((ps / STRIDE_FRAC))" \
+        --downscale "$MASK_DOWNSCALE" --out-dir "$SEG_DIR"
 
     [ -f "$SEG_DIR/${slide}_feat.npz" ] || python -u seg_extract.py \
         --slide "$slide" --he "$image" --patch-um "$PATCH_UM" \

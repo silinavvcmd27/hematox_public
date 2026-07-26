@@ -13,3 +13,5 @@ outputs/results/TCGA-*
 # Исключения (маленькие важные файлы)
 !outputs/results/*.csv
 !outputs/results/tcga_km_tsp.png
+*.bak
+hematox_backup_*

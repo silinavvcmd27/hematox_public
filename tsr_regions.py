@@ -16,6 +16,70 @@ from pathlib import Path
 import numpy as np
 from scipy.signal import fftconvolve
 
+from src.utils import TUMOR, STROMA_HORMONAL, STROMA_MATRIX
+
+
+def box_mean(a, out_h, out_w):
+    """Средняя доля по ячейкам грубой сетки. Замена cv2.resize(INTER_AREA).
+
+    OpenCV тянулся в проект целиком (~60 МБ) ради двух изменений размера.
+    """
+    h, w = a.shape
+    ys = np.linspace(0, h, out_h + 1).astype(int)
+    xs = np.linspace(0, w, out_w + 1).astype(int)
+    cs = np.zeros((h + 1, w + 1), np.float64)
+    cs[1:, 1:] = a.cumsum(0).cumsum(1)
+    Y0, Y1 = ys[:-1, None], ys[1:, None]
+    X0, X1 = xs[None, :-1], xs[None, 1:]
+    s = cs[Y1, X1] - cs[Y0, X1] - cs[Y1, X0] + cs[Y0, X0]
+    n = np.maximum((Y1 - Y0) * (X1 - X0), 1)
+    return (s / n).astype(np.float32)
+
+
+def resize_nearest(a, out_h, out_w):
+    """Ближайший сосед. Замена cv2.resize(INTER_NEAREST)."""
+    yi = (np.arange(out_h) * a.shape[0] / out_h).astype(int).clip(0, a.shape[0] - 1)
+    xi = (np.arange(out_w) * a.shape[1] / out_w).astype(int).clip(0, a.shape[1] - 1)
+    return a[yi][:, xi]
+
+
+CSV_FIELDS = ["срез", "область", "TSR", "площадь_мм2", "гормональная_мм2",
+              "матриксная_мм2", "wt_threshold", "mi_radius_mm", "work_mpp"]
+
+
+def write_rows(path, new_rows):
+    """Записать строки, заменив прежние с тем же ключом (срез, область, параметры).
+
+    БЫЛО: режим "a" без ключа. В outputs/results/tsr_regions.csv накопилось
+    шесть строк на один срез — дубли от прогонов с разными параметрами, и какая
+    строка актуальная, по файлу понять нельзя.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def key(r):
+        return (str(r.get("срез")), str(r.get("область")),
+                str(r.get("wt_threshold")), str(r.get("mi_radius_mm")),
+                str(r.get("work_mpp")))
+
+    old = []
+    if path.exists():
+        with open(path, newline="", encoding="utf-8") as fh:
+            old = list(csv.DictReader(fh))
+    keys = {key(r) for r in new_rows}
+    kept = [r for r in old if key(r) not in keys]
+    if len(kept) < len(old):
+        print(f"  заменено прежних строк: {len(old) - len(kept)}")
+
+    tmp = path.with_suffix(".tmp")
+    with open(tmp, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=CSV_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        for r in kept + new_rows:
+            w.writerow(r)
+    tmp.replace(path)      # атомарно: обрыв не оставит обрезанный файл
+    print(f"\nзаписано: {path} ({len(kept) + len(new_rows)} строк)")
+
 
 def disc(radius_px):
     r = int(round(radius_px))
@@ -23,9 +87,19 @@ def disc(radius_px):
     return (x * x + y * y <= r * r).astype(np.float32)
 
 
-def tsr(stroma_px, tumor_px):
+def tsr(stroma_px, tumor_px, min_px=50):
+    """Доля стромы среди опухоли и стромы. NA, если считать не на чем.
+
+    БЫЛО: при tumor_px == 0 возвращалось ровно 1.0, и срез без опухоли попадал
+    в группу худшего прогноза. Это худший вид ошибки: она выглядит как
+    результат. TSR без опухоли не определён.
+
+    min_px — минимум размеченных ячеек, ниже которого доля случайна.
+    """
     total = stroma_px + tumor_px
-    return float(stroma_px / total) if total else float("nan")
+    if total < min_px or tumor_px == 0:
+        return float("nan")
+    return float(stroma_px / total)
 
 
 def main():
@@ -46,7 +120,6 @@ def main():
     ap.add_argument("--out-csv", default="outputs/results/tsr_regions.csv")
     args = ap.parse_args()
 
-    import cv2
 
     d = np.load(args.map)
     cls = d["cls"]
@@ -55,17 +128,23 @@ def main():
     px_mm2 = (mpp / 1000) ** 2
     print(f"карта {W}x{H}, {mpp:.2f} мкм/px, срез {W*mpp/1000:.1f} x {H*mpp/1000:.1f} мм")
 
-    tumor_full = (cls == 1)
-    stroma_full = (cls == 2)
+    tumor_full = (cls == TUMOR)
+    horm_full = (cls == STROMA_HORMONAL)
+    matr_full = (cls == STROMA_MATRIX)
+    stroma_full = horm_full | matr_full
     print(f"опухоль {tumor_full.sum()*px_mm2:.1f} мм², "
-          f"строма {stroma_full.sum()*px_mm2:.1f} мм²")
+          f"строма {stroma_full.sum()*px_mm2:.1f} мм² "
+          f"(гормональная {horm_full.sum()*px_mm2:.1f}, "
+          f"матриксная {matr_full.sum()*px_mm2:.1f} мм²)")
 
     # области ищем на грубой сетке: точность до пары микрометров тут не нужна,
     # а свёртка с кругом в 800 пикселей на полном разрешении неподъёмна
     f = args.work_mpp / mpp
     Ww, Hw = max(1, int(W / f)), max(1, int(H / f))
-    tum_w = cv2.resize(tumor_full.astype(np.float32), (Ww, Hw), interpolation=cv2.INTER_AREA)
-    str_w = cv2.resize(stroma_full.astype(np.float32), (Ww, Hw), interpolation=cv2.INTER_AREA)
+    tum_w = box_mean(tumor_full.astype(np.float32), Hw, Ww)
+    str_w = box_mean(stroma_full.astype(np.float32), Hw, Ww)
+    horm_w = box_mean(horm_full.astype(np.float32), Hw, Ww)
+    matr_w = box_mean(matr_full.astype(np.float32), Hw, Ww)
     tis_w = tum_w + str_w   # доля неfоновых пикселей в ячейке
     print(f"рабочая сетка {Ww}x{Hw} при {args.work_mpp:.0f} мкм/px")
 
@@ -115,7 +194,7 @@ def main():
     # чтобы сама ячейка была тканью, иначе ложе вылезает на пустое поле
     bed_w = (dens >= args.wt_threshold) & (tis_w >= args.wt_min_tissue)
 
-    bed_full = cv2.resize(bed_w.astype(np.uint8), (W, H), interpolation=cv2.INTER_NEAREST) > 0
+    bed_full = resize_nearest(bed_w.astype(np.uint8), H, W) > 0
     t_wt = int((tumor_full & bed_full).sum())
     s_wt = int((stroma_full & bed_full).sum())
     print(f"WT: ложе занимает {100*bed_w.mean():.1f}% кадра, "
@@ -129,29 +208,32 @@ def main():
         print(f"{r['область']:24s} {100*r['TSR']:6.1f}% {r['площадь_мм2']:9.1f} мм²  {verdict}")
 
     name = Path(args.map).stem
-    out_csv = Path(args.out_csv)
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    first = not out_csv.exists()
-    with open(out_csv, "a", newline="") as fh:
-        w = csv.DictWriter(fh, fieldnames=["срез", "область", "TSR", "площадь_мм2"])
-        if first:
-            w.writeheader()
-        for r in rows:
-            w.writerow({"срез": name, "область": r["область"],
-                        "TSR": round(r["TSR"], 4),
-                        "площадь_мм2": round(r["площадь_мм2"], 1)})
-    print("\nдописано в", out_csv)
+    for r in rows:
+        r.update({"срез": name,
+                  "TSR": round(r["TSR"], 4) if r["TSR"] == r["TSR"] else "",
+                  "площадь_мм2": round(r["площадь_мм2"], 1),
+                  "wt_threshold": args.wt_threshold,
+                  "mi_radius_mm": args.mi_radius_mm,
+                  "work_mpp": args.work_mpp})
+    write_rows(args.out_csv, rows)
 
     vis = np.full((Hw, Ww, 3), 245, np.uint8)
     vis[str_w > tum_w] = (38, 139, 210)
     vis[tum_w > str_w] = (220, 50, 47)
     vis[tis_w < 0.15] = 245
-    cnts, _ = cv2.findContours(bed_w.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    cv2.drawContours(vis, cnts, -1, (20, 130, 60), 2)
+    # Контуры рисуем matplotlib: OpenCV нужен был только здесь.
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(max(Ww, 200) / 100, max(Hw, 200) / 100), dpi=100)
+    ax.imshow(vis)
+    ax.contour(bed_w.astype(float), levels=[0.5], colors="#148d3c", linewidths=1.2)
     if mi_center is not None:
-        cv2.circle(vis, mi_center, int(r_mi), (20, 20, 20), 2)
-    png = out_csv.parent / f"{name}_tsr_regions.png"
-    cv2.imwrite(str(png), vis[:, :, ::-1])
+        ax.add_patch(plt.Circle(mi_center, r_mi, fill=False, ec="#141414", lw=1.2))
+    ax.set_axis_off()
+    png = Path(args.out_csv).parent / f"{name}_tsr_regions.png"
+    fig.savefig(png, bbox_inches="tight", pad_inches=0)
+    plt.close(fig)
     print("области:", png, "— зелёный контур WT, чёрный круг MI")
 
 
