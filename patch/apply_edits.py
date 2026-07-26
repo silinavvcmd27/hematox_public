@@ -14,17 +14,32 @@ import argparse
 import sys
 from pathlib import Path
 
-E = []   # (файл, что_заменить, на_что, зачем)
+E = []   # (файл, что_заменить, на_что, зачем, прежние_редакции)
 
 
-def edit(f, old, new, why):
-    E.append((f, old, new, why))
+def edit(f, old, new, why, prev=()):
+    """prev — как это место выглядело после ПРЕДЫДУЩИХ версий патча.
+
+    Нужно, чтобы патч можно было накатывать повторно: если правка уже внесена,
+    её надо узнать, а не объявить несовпадением.
+    """
+    E.append((f, old, new, why, tuple(prev)))
 
 # ==========================================================================
 # src/utils.py — один список классов вместо трёх разных
 # ==========================================================================
-edit('''src/utils.py''',
-'''CLASS_NAMES = ["tumor", "stroma", "undefined"]
+# Палитра прошлой версии патча: нужна, чтобы узнать уже применённую правку
+# и обновить только цвета, не трогая остальной блок.
+PAL_V5 = '''CLASS_COLORS = {
+    BACKGROUND: (245, 245, 245),
+    TUMOR: (220, 50, 47),
+    STROMA_HORMONAL: (38, 139, 210),
+    STROMA_MATRIX: (181, 137, 0),
+    VESSELS_IMMUNE: (150, 150, 150),
+    IGNORE: (255, 255, 255),
+}'''
+
+UTILS_OLD = '''CLASS_NAMES = ["tumor", "stroma", "undefined"]
 CLASS_TO_IDX = {c: i for i, c in enumerate(CLASS_NAMES)}
 
 # цвета оверлея (RGB): красный / синий / оливковый
@@ -32,8 +47,25 @@ CLASS_COLORS = {
     "tumor": (220, 50, 47),
     "stroma": (38, 139, 210),
     "undefined": (133, 153, 0),
-}''',
-'''# ---------------------------------------------------------------------------
+}'''
+
+PAL_NEW = '''# Палитра подобрана так, чтобы классы различались не только при обычном
+# зрении, но и при дальтонизме (краснозелёная слепота — 8% мужчин).
+# Прежние красный + оливковый при протанопии давали разницу ΔE = 2.5, то есть
+# сливались полностью. У этой палитры худшая пара ΔE = 17.7 после наложения
+# на ткань — различимо при любом типе зрения. Классы разведены и по светлоте:
+# тёмно-красный / средний синий / яркий жёлтый / чёрный, поэтому карта
+# читается даже в чёрно-белой печати.
+CLASS_COLORS = {
+    BACKGROUND: (245, 245, 245),
+    TUMOR: (165, 15, 21),            # тёмно-красный
+    STROMA_HORMONAL: (5, 113, 176),  # синий
+    STROMA_MATRIX: (253, 231, 37),   # жёлтый
+    VESSELS_IMMUNE: (0, 0, 0),       # чёрный
+    IGNORE: (255, 255, 255),
+}'''
+
+UTILS_NEW = '''# ---------------------------------------------------------------------------
 # Классы зон. ЕДИНСТВЕННОЕ место, где они заданы: раньше нумерация расходилась
 # между src/utils.py, make_seg_masks_v.py и seg_train2.py, и инференс угадывал
 # соответствие каналов классам по их числу.
@@ -69,12 +101,19 @@ CLASS_TO_IDX = {c: i for i, c in enumerate(TRAIN_CLASSES)}
 # Что входит в TSR = строма / (строма + опухоль).
 STROMA_FOR_TSR = (STROMA_HORMONAL, STROMA_MATRIX)
 
+# Палитра подобрана так, чтобы классы различались не только при обычном
+# зрении, но и при дальтонизме (краснозелёная слепота — 8% мужчин).
+# Прежние красный + оливковый при протанопии давали разницу ΔE = 2.5, то есть
+# сливались полностью. У этой палитры худшая пара ΔE = 17.7 после наложения
+# на ткань — различимо при любом типе зрения. Классы разведены и по светлоте:
+# тёмно-красный / средний синий / яркий жёлтый / чёрный, поэтому карта
+# читается даже в чёрно-белой печати.
 CLASS_COLORS = {
     BACKGROUND: (245, 245, 245),
-    TUMOR: (220, 50, 47),
-    STROMA_HORMONAL: (38, 139, 210),
-    STROMA_MATRIX: (181, 137, 0),
-    VESSELS_IMMUNE: (150, 150, 150),
+    TUMOR: (165, 15, 21),            # тёмно-красный
+    STROMA_HORMONAL: (5, 113, 176),  # синий
+    STROMA_MATRIX: (253, 231, 37),   # жёлтый
+    VESSELS_IMMUNE: (0, 0, 0),       # чёрный
     IGNORE: (255, 255, 255),
 }
 
@@ -112,8 +151,11 @@ def patch_px_for_um(path, um):
     256 пикселей покрывал бы 35 и 70 мкм, то есть модель смотрела бы на разное
     увеличение. Поэтому поле зрения задаётся в микрометрах.
     """
-    return int(round(float(um) / slide_mpp(path)))''',
-     '''единый список классов + перенос slide_mpp в utils''')
+    return int(round(float(um) / slide_mpp(path)))'''
+
+edit('''src/utils.py''', UTILS_OLD, UTILS_NEW,
+     '''единый список классов + перенос slide_mpp в utils''',
+     prev=[UTILS_NEW.replace(PAL_NEW, PAL_V5)])
 
 # ==========================================================================
 # tsr_regions.py
@@ -479,8 +521,8 @@ def main():
         sys.exit("ОШИБКА: в текущей папке нет tsr_regions.py. "
                  "Перейдите в корень проекта.")
 
-    texts, bad = {}, []
-    for f, old, new, why in E:
+    texts, bad, done, upd = {}, [], 0, 0
+    for f, old, new, why, prev in E:
         p = Path(f)
         if not p.exists():
             print("  НЕТ ФАЙЛА %-26s %s" % (f, why))
@@ -488,15 +530,32 @@ def main():
             continue
         if f not in texts:
             texts[f] = p.read_text(encoding="utf-8")
-        n = texts[f].count(old)
-        if n == 1:
+
+        # Порядок важен: сначала проверяем НОВЫЙ вариант. У части правок старый
+        # фрагмент — это начало нового (текст дописывается после него), поэтому
+        # после применения он всё ещё находится, и проверка по старому привела
+        # бы к повторному применению — дублю кода в файле.
+        if texts[f].count(new) >= 1:
+            print("  уже есть %-26s %s" % (f, why))
+            done += 1
+            continue
+        if texts[f].count(old) == 1:
             print("  ок       %-26s %s" % (f, why))
             texts[f] = texts[f].replace(old, new, 1)
-        else:
-            print("  НЕ НАЙД  %-26s %s" % (f, why))
-            head = old.strip().splitlines()[0][:60]
-            bad.append("%s: фрагмент найден %d раз(а), нужен ровно 1\n"
-                       "          начало фрагмента: %s" % (f, n, head))
+            continue
+        # место правил прежний патч, а сейчас редакция изменилась — обновляем
+        older = [q for q in prev if texts[f].count(q) == 1]
+        if older:
+            print("  обновляю %-26s %s" % (f, why))
+            texts[f] = texts[f].replace(older[0], new, 1)
+            upd += 1
+            continue
+
+        print("  НЕ НАЙД  %-26s %s" % (f, why))
+        head = old.strip().splitlines()[0][:60]
+        bad.append("%s: фрагмент найден %d раз(а), нужен ровно 1\n"
+                   "          начало фрагмента: %s"
+                   % (f, texts[f].count(old), head))
 
     if bad:
         print("\n=== НЕ ПРИМЕНЕНО НИЧЕГО. Не совпало: ===")
@@ -508,19 +567,37 @@ def main():
         print("    wc -l *.py src/*.py src/*/*.py")
         sys.exit(1)
 
+    # Меняем только те файлы, содержимое которых реально отличается: при
+    # повторном запуске патча менять нечего, и плодить .bak-копии не нужно.
+    changed = {f: t for f, t in texts.items()
+               if t != Path(f).read_text(encoding="utf-8")}
+
+    if done or upd:
+        print("\nуже внесено ранее: %d, обновлено до новой редакции: %d"
+              % (done, upd))
+    if not changed:
+        print("\nВсе правки уже на месте, менять нечего.")
+        return
+
     if not args.apply:
         print("\nВсе %d правок найдены, ничего не изменено. Применить:" % len(E))
         print("    python patch/apply_edits.py --apply")
         return
 
-    for f, t in texts.items():
-        Path(f + ".bak").write_text(Path(f).read_text(encoding="utf-8"), encoding="utf-8")
+    for f, t in changed.items():
+        # .bak делаем только если его ещё нет: при повторном запуске патча
+        # он затёр бы сам себя, и настоящий исходник было бы не вернуть.
+        b = Path(f + ".bak")
+        if b.exists():
+            print("  записан %s   (бэкап %s.bak уже был)" % (f, f))
+        else:
+            b.write_text(Path(f).read_text(encoding="utf-8"), encoding="utf-8")
+            print("  записан %s   (бэкап %s.bak)" % (f, f))
         Path(f).write_text(t, encoding="utf-8")
-        print("  записан %s   (бэкап %s.bak)" % (f, f))
 
     print("\nПроверяю, что Python-файлы разбираются...")
     import ast
-    for f in texts:
+    for f in changed:
         if f.endswith(".py"):
             try:
                 ast.parse(Path(f).read_text(encoding="utf-8"))

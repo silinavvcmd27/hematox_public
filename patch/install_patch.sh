@@ -34,6 +34,7 @@ declare -A COPY=(
   [stain_norm.py]=stain_norm.py
   [seg_infer.py]=seg_infer.py
   [check_stroma_split.py]=check_stroma_split.py
+  [describe_slide.py]=describe_slide.py
 )
 
 # Файлы, в которые apply_edits.py вносит точечные правки.
@@ -115,12 +116,24 @@ for f in "${REMOVE[@]}"; do
   fi
 done
 
+# Патч можно накатывать повторно. Поэтому: файл, который уже совпадает с
+# новым, не трогаем вовсе, а .bak делаем ТОЛЬКО если его ещё нет — иначе
+# второй запуск затёр бы бэкапом самого себя, и настоящий исходник пропал бы.
 for src in "${!COPY[@]}"; do
   dst="${COPY[$src]}"
   mkdir -p "$(dirname "$dst")"
+  if [ -f "$dst" ] && cmp -s "$HERE/$src" "$dst"; then
+    echo "  уже такой же $dst"
+    continue
+  fi
   if [ -f "$dst" ]; then
-    cp "$dst" "$dst.bak" && echo "  бэкап $dst.bak"
-    [ "$HAVE_GIT" = 1 ] || { mkdir -p "$BACKUP/$(dirname "$dst")"; cp "$dst" "$BACKUP/$dst"; }
+    if [ -f "$dst.bak" ]; then
+      echo "  бэкап $dst.bak уже есть, не перезаписываю"
+    else
+      cp "$dst" "$dst.bak" && echo "  бэкап $dst.bak"
+    fi
+    [ "$HAVE_GIT" = 1 ] || { mkdir -p "$BACKUP/$(dirname "$dst")"
+                             [ -f "$BACKUP/$dst" ] || cp "$dst" "$BACKUP/$dst"; }
   fi
   cp "$HERE/$src" "$dst" && echo "  записан $dst"
 done

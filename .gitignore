@@ -15,3 +15,4 @@ outputs/results/TCGA-*
 !outputs/results/tcga_km_tsp.png
 *.bak
 hematox_backup_*
+hematox_backup_*

@@ -296,9 +296,46 @@ def main():
         if m.any():
             ov[m] = (0.45 * np.array(col) + 0.55 * thumb[m]).astype(np.uint8)
 
+    # Легенда прямо на картинке: без неё цвета надо помнить наизусть, а карту
+    # смотрят обычно не те, кто её считал. Рисуется через PIL, чтобы не тянуть
+    # matplotlib в инференс.
+    canvas = np.concatenate([thumb, ov], 1)
+    shown = [c for c in (TUMOR, STROMA_HORMONAL, STROMA_MATRIX, VESSELS_IMMUNE)
+             if (zr == c).any()]
+    if shown:
+        from PIL import ImageDraw, ImageFont
+        pad, box, gap = 10, max(12, canvas.shape[0] // 60), 6
+        try:
+            font = ImageFont.truetype(
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", box)
+        except OSError:
+            font = ImageFont.load_default()
+        # знаменатель — размеченная ткань: фон и «не размечено» в доли не входят,
+        # иначе проценты зависели бы от того, сколько на стекле пустого места
+        n_tis = int(np.isin(zones, [TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
+                                    VESSELS_IMMUNE]).sum())
+        rows = [(c, "%s — %.1f%%" % (CLASS_NAMES[c],
+                                     100 * (zones == c).sum() / max(n_tis, 1)))
+                for c in shown]
+        img = Image.fromarray(canvas)
+        dr = ImageDraw.Draw(img)
+        wtxt = max(dr.textlength(t, font=font) for _, t in rows)
+        w = int(pad + box + gap + wtxt + pad)
+        h = pad + len(rows) * (box + gap) - gap + pad
+        x0, y0 = canvas.shape[1] - w - pad, pad
+        dr.rectangle([x0, y0, x0 + w, y0 + h], fill=(255, 255, 255),
+                     outline=(120, 120, 120))
+        for i, (c, t) in enumerate(rows):
+            y = y0 + pad + i * (box + gap)
+            dr.rectangle([x0 + pad, y, x0 + pad + box, y + box],
+                         fill=tuple(CLASS_COLORS[c]), outline=(80, 80, 80))
+            dr.text((x0 + pad + box + gap, y - 1), t, fill=(20, 20, 20),
+                    font=font)
+        canvas = np.asarray(img)
+
     out = args.out or str(ensure_dir("outputs/results") /
                           (Path(args.slide).stem + "_seg_map.png"))
-    Image.fromarray(np.concatenate([thumb, ov], 1)).save(out)
+    Image.fromarray(canvas).save(out)
 
     # карта классов, чтобы пересчитывать TSR по областям без прогона UNI
     npz = Path(out).with_suffix(".npz")
