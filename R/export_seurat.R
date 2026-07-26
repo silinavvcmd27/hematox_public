@@ -17,12 +17,19 @@
 #   5. Файл записывается атомарно (через временное имя), чтобы прерванная
 #      выгрузка не оставила обрезанный CSV, который потом молча прочитается.
 #
-# Запуск:
-#   Rscript R/export_seurat.R /mnt/.../seurat2_ann_all.rds
+# Запуск: пути к .rds передаются аргументами, по одному на срез.
 #
-# Имя среза берётся из имени файла. Чтобы задать своё имя и/или свою колонку
-# подтипов, пишите через двоеточие:
-#   Rscript R/export_seurat.R ovary2_he:Annotation_3_iter_new=/mnt/.../seurat_3_iteration.rds
+#   Rscript R/export_seurat.R имя:подтип=/путь/к.rds  имя2:подтип2=/путь2.rds
+#
+# Поля слева от «=» необязательны, но лучше указывать: имя среза (иначе
+# берётся из имени файла) и колонка подтипов (иначе первая найденная из
+# SUBTYPE_COLS). Третьим полем можно задать колонку основного типа:
+#   имя:подтип:тип=путь
+#
+# ВАЖНО: в сырых .rds колонки Annotation_main_types_new обычно нет — она
+# собирается вашим кодом уже в сессии. Это не ошибка: скрипт возьмёт cell_type
+# равным подтипу и скажет об этом. Для шага 6 достаточно подтипов, решение
+# принимается по экспрессии.
 
 suppressPackageStartupMessages(library(Seurat))
 
@@ -56,17 +63,47 @@ dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 all_types <- character(0)
 all_subs <- character(0)
 
+# Матрица счётчиков. В Seurat v5 GetAssayData на многослойном assay падает,
+# а у вас объекты разных версий — поэтому сначала пробуем LayerData.
+get_counts <- function(obj) {
+  a <- obj[[DefaultAssay(obj)]]
+  m <- try(SeuratObject::LayerData(a, layer = "counts"), silent = TRUE)
+  if (inherits(m, "try-error") || is.null(m))
+    m <- GetAssayData(obj, layer = "counts")
+  if (is.null(m) || nrow(m) == 0)
+    stop("не удалось получить counts из assay ", DefaultAssay(obj))
+  m
+}
+
 write_atomic <- function(df, path) {
   tmp <- paste0(path, ".tmp")
   write.csv(df, tmp, row.names = FALSE)
   file.rename(tmp, path)
 }
 
-get_celltype <- function(obj) {
+# Основной тип клетки. В сырых .rds его может не быть: Annotation_main_types_new
+# собирается вашим кодом уже в сессии (набор ifelse). Тогда честнее взять
+# подтип, чем Idents(): Idents — это номера кластеров Seurat, они к типам
+# отношения не имеют, и разметка вышла бы бессмысленной.
+get_celltype <- function(obj, forced = NA, sub_v = NULL, sub_col = NA) {
   md <- obj@meta.data
-  if (celltype_col %in% colnames(md)) return(as.character(md[[celltype_col]]))
-  warning("колонки '", celltype_col, "' нет, беру Idents()", call. = FALSE)
-  as.character(Idents(obj))
+  col <- if (!is.na(forced)) forced else celltype_col
+  if (col %in% colnames(md)) {
+    message("  основной тип беру из: ", col)
+    return(as.character(md[[col]]))
+  }
+  if (!is.na(forced))
+    stop("колонки '", forced, "' нет в объекте. Есть: ",
+         paste(colnames(md), collapse = ", "))
+  if (!is.null(sub_v)) {
+    message("  колонки '", col, "' в объекте нет — cell_type беру равным ",
+            "подтипу (", sub_col, ").")
+    message("  Это нормально для шага 6: решение принимается по экспрессии, ",
+            "а не по названию.")
+    return(sub_v)
+  }
+  stop("нет ни '", col, "', ни колонки подтипов. Укажите колонку явно: ",
+       "имя:подтип:тип=путь")
 }
 
 # Подтип: первая найденная колонка из SUBTYPE_COLS, либо заданная явно.
@@ -90,8 +127,13 @@ get_subtype <- function(obj, forced = NA) {
     col <- cand[1]
   }
   if (is.na(col)) {
-    warning("колонки подтипов не нашла, cell_subtype = cell_type", call. = FALSE)
-    return(list(v = NULL, col = NA))
+    message("  ни одной известной колонки подтипов нет. Что есть в объекте:")
+    for (cc in colnames(md)) {
+      u <- length(unique(md[[cc]]))
+      if (u > 1 && u < 200 && !is.numeric(md[[cc]]))
+        message("    ", cc, " — уровней: ", u)
+    }
+    stop("укажите колонку подтипов явно: имя:колонка=путь")
   }
   message("  подтипы беру из: ", col)
   list(v = as.character(md[[col]]), col = col)
@@ -110,18 +152,20 @@ get_coords <- function(obj) {
   data.frame(x = as.numeric(xy[[xi]]), y = as.numeric(xy[[yi]]))
 }
 
-# "имя:колонка=путь", "имя=путь" или просто "путь"
+# "имя:подтип:тип=путь", "имя:подтип=путь", "имя=путь" или просто "путь".
+# Третье поле — колонка основного типа, если она в объекте есть.
 parse_arg <- function(a) {
-  slide <- NA; subcol <- NA; path <- a
+  slide <- NA; subcol <- NA; ctcol <- NA; path <- a
   if (grepl("=", a, fixed = TRUE)) {
     lhs <- sub("=.*$", "", a)
     path <- sub("^[^=]*=", "", a)
-    if (grepl(":", lhs, fixed = TRUE)) {
-      slide <- sub(":.*$", "", lhs); subcol <- sub("^[^:]*:", "", lhs)
-    } else slide <- lhs
+    f <- strsplit(lhs, ":", fixed = TRUE)[[1]]
+    if (length(f) >= 1 && nzchar(f[1])) slide <- f[1]
+    if (length(f) >= 2 && nzchar(f[2])) subcol <- f[2]
+    if (length(f) >= 3 && nzchar(f[3])) ctcol <- f[3]
   }
   if (is.na(slide)) slide <- tools::file_path_sans_ext(basename(path))
-  list(slide = slide, subcol = subcol, path = path)
+  list(slide = slide, subcol = subcol, ctcol = ctcol, path = path)
 }
 
 for (a in args) {
@@ -133,8 +177,17 @@ for (a in args) {
   if (inherits(try(validObject(obj), silent = TRUE), "try-error"))
     obj <- UpdateSeuratObject(obj)
 
-  ct <- get_celltype(obj)
+  # Активный assay. Без этого гены ищутся в том, который стоял по умолчанию
+  # при сохранении объекта: если это SCT или RNA, маркеров Xenium там может
+  # не быть, и скрипт напишет «ни одного маркерного гена» на пустом месте.
+  if ("Xenium" %in% Assays(obj)) {
+    DefaultAssay(obj) <- "Xenium"
+  }
+  message("  assay: ", DefaultAssay(obj), "; всего генов: ", nrow(obj),
+          "; клеток: ", ncol(obj))
+
   sub <- get_subtype(obj, p$subcol)
+  ct <- get_celltype(obj, p$ctcol, sub$v, sub$col)
   xy <- get_coords(obj)
   ids <- colnames(obj)
   n <- min(nrow(xy), length(ct), length(ids))
@@ -166,7 +219,8 @@ for (a in args) {
   } else {
     # counts, а не data: нормировку делает check_stroma_split.py, чтобы
     # она была одинаковой для всех срезов
-    m <- GetAssayData(obj, layer = "counts")[present, seq_len(n), drop = FALSE]
+    cnt <- get_counts(obj)
+    m <- cnt[present, seq_len(n), drop = FALSE]
     e <- cbind(data.frame(cell_id = ids[seq_len(n)]),
                as.data.frame(as.matrix(Matrix::t(m))))
     write_atomic(e, file.path(out_dir, paste0(slide, "_expr.csv")))
@@ -177,8 +231,7 @@ for (a in args) {
     # гормональный, а какой матриксный. Нормировка на глубину: доля от суммы
     # всех транскриптов клетки, потом log1p — иначе крупные клетки дают
     # больший балл просто из-за размера.
-    tot <- Matrix::colSums(GetAssayData(obj, layer = "counts")[, seq_len(n),
-                                                               drop = FALSE])
+    tot <- Matrix::colSums(cnt[, seq_len(n), drop = FALSE])
     tot[tot == 0] <- 1
     norm <- log1p(Matrix::t(m) / tot * 1e3)
     agg <- aggregate(as.matrix(norm), by = list(cell_subtype = st), FUN = mean)
