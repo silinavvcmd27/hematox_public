@@ -71,14 +71,19 @@ def score(expr, genes, label):
 # Подтипы, которые вообще не строма: их не раскладываем по двум типам.
 # \b — граница слова. Без неё короткие куски ловят чужие слова:
 # "nk" находится внутри "Unknown", "dc" внутри "adcy". Проверено на тесте.
-NOT_STROMA = r"cancer|tumou?r cell|epi_area|epithel|myeloid|macroph|lymph|" \
-             r"\bT cells|\bB cells|\bNK\b|plasma|mast cell|\bDC\b|\bcDC\b|" \
-             r"\bpDC\b|endotheli|\bEC cells|tip cells|doublet|delete|other cells"
+# Не строма. Границы слова \b тут ставить нельзя перед CAFs/DC/EC: в реальных
+# названиях они склеены с приставкой (apCAFs, mregDC, EC_pery), и \b не
+# сработает — раньше из-за этого 36 подтипов уходили в «неясно».
+NOT_STROMA = r"cancer|malignant|tumou?r cell|epi_area|epithel|myeloid|macroph|" \
+             r"monocyt|lymph|\bT cells?\b|\bB cells?\b|\bNK\b|plasma|mast cell|" \
+             r"neutroph|\bTreg\b|\bTcm\b|\bTem\b|\bTrm\b|\binfT\b|DCs?\d*\b|" \
+             r"endotheli|\bEC\b|\bEC[_ ]|\bHEV\b|tip cells|doublet|delete|" \
+             r"other cells|\bMye\b"
 
 # Похоже на строму по названию. Перицитов и гладкую мышцу включаем: они
 # стромальные, но по маркерам должны уйти в матриксную группу.
-IS_STROMA = r"fibro|\bCAFs?\b|\bNFs?\b|pericyt|perycit|\bpery\b|\bSMC\b|" \
-            r"granulosa|theca|lutein|stroma|mesothel|^Hs$"
+IS_STROMA = r"fibro|CAFs?\b|NFs?\b|pericyt|perycit|\bpery\b|\bSMC\b|myofibro|" \
+            r"granulosa|theca|lutein|stroma|mesothel|^Hs$|smooth muscle"
 
 # Насколько балл стероидогенеза должен превышать матриксный, чтобы отнести
 # подтип к гормональной строме. Разница считается в z-оценках внутри среза,
@@ -87,11 +92,16 @@ IS_STROMA = r"fibro|\bCAFs?\b|\bNFs?\b|pericyt|perycit|\bpery\b|\bSMC\b|" \
 # коридор от -0.5 до +0.5, помечается «спорно» и решается глазами: около
 # нуля различие неотличимо от случайного.
 MARGIN = 0.5
-# На сколько экспрессия стероидогенных генов должна превышать их фон в
+# Во сколько раз экспрессия стероидогенных генов должна превышать их фон в
 # нестромальных клетках того же среза. Страховка от того, что z-оценка
 # относительная: без неё в срезе из одних матриксных подтипов «победитель»
-# всё равно объявляется гормональным. Единицы — как в данных (log-нормировка).
-MIN_LIFT = 0.5
+# всё равно объявляется гормональным.
+#
+# Считается КРАТНОСТЬ, а не разница логарифмов. Разница логарифмов зависит от
+# уровня экспрессии: у генов Xenium-панели с низким счётом подъём в 15 раз
+# даёт разницу всего 0.3, и порог в тех же единицах отрезал бы верные
+# подтипы. Кратность от уровня не зависит.
+MIN_FOLD = 3.0
 MIN_CELLS = 30      # подтипы мельче — в отдельную группу, они ненадёжны
 
 
@@ -166,7 +176,23 @@ def subtype_mode(paths, out):
     # фон: медиана по нестромальным подтипам среза
     base = (tab[tab.kind == "не строма"].groupby("slide")["raw_steroid"]
             .median())
-    tab["lift"] = tab.raw_steroid - tab.slide.map(base)
+    # Из логарифмов обратно в линейные единицы — там отношение имеет смысл.
+    lin = np.expm1(tab.raw_steroid).clip(lower=0)
+    lin_base = np.expm1(tab.slide.map(base)).clip(lower=0)
+    # Знаменатель не даём обнулиться: если фон нулевой, любая ненулевая
+    # экспрессия — бесконечная кратность, что верно по сути, но делить нельзя.
+    eps = max(1e-4, float(lin[lin > 0].min()) * 0.1) if (lin > 0).any() else 1e-4
+    tab["fold"] = lin / lin_base.clip(lower=eps)
+    tab["lift"] = tab.raw_steroid - tab.slide.map(base)   # для справки в таблице
+    n_ref = tab[tab.kind == "не строма"].groupby("slide").size()
+    print("\nопора (фон стероидогенных генов в нестромальных клетках):")
+    for sl in sorted(tab.slide.unique()):
+        if sl in base.index:
+            print("   %-14s фон %.3f  (по %d нестромальным подтипам)"
+                  % (sl, base[sl], n_ref.get(sl, 0)))
+        else:
+            print("   %-14s нестромальных подтипов нет — опоры нет" % sl)
+
     no_ref = sorted(set(tab.slide) - set(base.index))
     if no_ref:
         print("\nВНИМАНИЕ: в срезах %s нет нестромальных подтипов, сравнить "
@@ -182,7 +208,7 @@ def subtype_mode(paths, out):
         if r["diff"] > MARGIN:
             # разница есть, но над фоном подъёма нет — значит, это просто
             # самый «менее матриксный» подтип, а не гормональная строма
-            if pd.notna(r.lift) and r.lift < MIN_LIFT:
+            if pd.notna(r.fold) and r.fold < MIN_FOLD:
                 return "спорно"
             return "stroma_hormonal"
         if r["diff"] < -MARGIN:
@@ -191,9 +217,50 @@ def subtype_mode(paths, out):
 
     tab["предложение"] = tab.apply(decide, axis=1)
 
+    # Что сделал порог по кратности. Без этого непонятно, почему подтип с
+    # большой разницей баллов оказался «спорным».
+    cand = tab[(tab.kind == "строма") & (tab["diff"] > MARGIN)
+               & (tab.n_cells >= MIN_CELLS)].sort_values("diff", ascending=False)
+    if len(cand):
+        print("\nкандидаты в гормональные — подъём над фоном нестромальных "
+              "клеток среза (порог %.1fx):" % MIN_FOLD)
+        for _, r in cand.head(20).iterrows():
+            mark = "прошёл" if r["предложение"] == "stroma_hormonal" else "ОТСЕЯН"
+            f = "%.1fx" % r.fold if pd.notna(r.fold) else "нет опоры"
+            print("   %-34s %-8s разница %5.2f  подъём %8s  клеток %d"
+                  % (str(r.cell_subtype)[:34], mark, r["diff"], f, r.n_cells))
+        cut = cand[cand["предложение"] != "stroma_hormonal"]
+        if len(cut) and not len(cand[cand["предложение"] == "stroma_hormonal"]):
+            print("\n   Порог отсеял ВСЕХ. Если подъём у верхних подтипов "
+                  "близок к %.1fx —" % MIN_FOLD)
+            print("   снизьте MIN_FOLD в начале файла и запустите ещё раз.")
+
+    # Разбивка по срезам. Если гормональная строма нашлась только в одном
+    # срезе, обучать пятый класс всё равно нельзя: модель запомнит этот срез,
+    # а не морфологию, и проверка с исключением среза это покажет как провал.
+    print("\nпо срезам:")
+    hdr = "   %-14s %-26s %-26s %s" % ("срез", "гормональная", "матриксная", "спорных")
+    print(hdr)
+    lopsided = []
+    for sl, g in tab.groupby("slide"):
+        h = g[g["предложение"] == "stroma_hormonal"]
+        m = g[g["предложение"] == "stroma_matrix"]
+        u = int((g["предложение"] == "спорно").sum())
+        print("   %-14s %-26s %-26s %d"
+              % (sl, "%d подтип., %d кл." % (len(h), h.n_cells.sum()),
+                 "%d подтип., %d кл." % (len(m), m.n_cells.sum()), u))
+        if len(h) == 0:
+            lopsided.append(sl)
+    if lopsided:
+        print("\n   ВНИМАНИЕ: гормональной стромы нет в срезах: %s."
+              % ", ".join(lopsided))
+        print("   Класс держится на остальных. Проверка с исключением среза "
+              "по этому классу\n   будет неинформативна — учитывайте это при "
+              "оценке качества.")
+
     out.parent.mkdir(parents=True, exist_ok=True)
     cols = ["slide", "cell_subtype", "cell_type", "n_cells", "score_steroid",
-            "score_matrix", "diff", "raw_steroid", "lift", "kind",
+            "score_matrix", "diff", "raw_steroid", "fold", "lift", "kind",
             "предложение"]
     tab[cols].sort_values(["slide", "diff"], ascending=[True, False]).to_csv(
         "%s_subtypes.csv" % out, index=False)

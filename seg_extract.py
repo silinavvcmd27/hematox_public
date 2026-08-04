@@ -57,6 +57,28 @@ def encode(model, patches, device, bs=32):
     return np.concatenate(feats, 0)
 
 
+def relabel_superpixel(he_patch, mask112, n_seg, min_frac=0.35):
+    """Метки по суперпикселям: SLIC делит патч по морфологии H&E, каждому куску —
+    преобладающий класс внутри. Граница метки садится на край ткани, а не на
+    геометрию Вороного. Кусок без разметки (мало клеток) остаётся фоном."""
+    from skimage.segmentation import slic
+    import cv2
+    he = cv2.resize(he_patch, (OUT, OUT)).astype(np.float32) / 255.0
+    try:
+        sp = slic(he, n_segments=n_seg, compactness=10.0, start_label=1, channel_axis=-1)
+    except TypeError:
+        sp = slic(he, n_segments=n_seg, compactness=10.0, multichannel=True)
+    out = np.zeros_like(mask112)
+    for lab in np.unique(sp):
+        sel = sp == lab
+        vals = mask112[sel]
+        nz = vals[vals > 0]
+        if vals.size == 0 or nz.size / vals.size < min_frac:
+            continue
+        out[sel] = np.bincount(nz).argmax()
+    return out
+
+
 def variants(patch, mask, n):
     """Повороты и отражения. Срез не имеет верха и низа, так что это честно."""
     out = [(patch, mask)]
@@ -81,6 +103,10 @@ def main():
     ap.add_argument("--augment", type=int, choices=[1, 4, 8], default=1,
                     help="1 без аугментации, 4 повороты, 8 повороты и отражения")
     ap.add_argument("--seg-dir", default="data/processed/seg")
+    ap.add_argument("--out-dir", default=None,
+                    help="куда писать feat.npz (по умолчанию = seg-dir)")
+    ap.add_argument("--superpixel", type=int, default=0,
+                    help="n_segments SLIC (0=выкл): метки по суперпикселям вместо Вороного")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -116,6 +142,8 @@ def main():
         p = img[y0:y0 + ps, x0:x0 + ps]
         m = mask[y0 // ds:(y0 + ps) // ds, x0 // ds:(x0 + ps) // ds]
         m = cv2.resize(m, (OUT, OUT), interpolation=cv2.INTER_NEAREST)
+        if args.superpixel:
+            m = relabel_superpixel(p, m, args.superpixel)
         for pv, mv in variants(p, m, args.augment):
             patches.append(pv)
             masks.append(mv)
@@ -130,7 +158,7 @@ def main():
     X = encode(enc, patches, device, bs=cfg["encoder"]["batch_size"])
     y = np.stack(masks).astype(np.uint8)
 
-    out = ensure_dir(args.seg_dir) / f"{args.slide}_feat.npz"
+    out = ensure_dir(args.out_dir or args.seg_dir) / f"{args.slide}_feat.npz"
     np.savez_compressed(out, X=X, y=y, patch_px=ps, patch_um=args.patch_um)
     print(f"\nsaved {out}  X={X.shape} y={y.shape}")
     print("пиксели:", {int(k): int(v) for k, v in zip(*np.unique(y, return_counts=True))})

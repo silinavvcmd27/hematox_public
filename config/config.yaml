@@ -2,7 +2,7 @@
 
 project:
   name: hematox_spatial
-  classes: [tumor, stroma, undefined]   # индексы 0,1,2
+  classes: [tumor, stroma_hormonal, stroma_matrix, immune, stroma, undefined]
   seed: 42
   
 #Пути

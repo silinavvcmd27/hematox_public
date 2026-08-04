@@ -1,13 +1,3 @@
-# Инференс по целому срезу со сравнением с маской Вороного.
-# Считает accuracy, IoU, Dice, матрицу ошибок и TSP — предсказанный и истинный.
-#
-# Число классов берётся из чекпоинта, предсказание приводится к кодировке
-# 0 не размечено, 1 опухоль, 2 строма — как в маске.
-#
-# python -u seg_eval_slide.py --slide ovary_prime_he \
-#   --he data/raw/ovary_prime/..._he_image.ome.tif \
-#   --model outputs/models/seg2_ovary_prime_he.pth --stride 512
-
 import argparse
 import csv
 from pathlib import Path
@@ -18,13 +8,27 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
 
-from src.utils import get_device, hf_login, ensure_dir
+from src.utils import (get_device, hf_login, ensure_dir, CLASS_NAMES,
+                       TRAIN_CLASSES, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
+                       IMMUNE, STROMA, STROMA_FOR_TSR, IGNORE, CLASS_COLORS)
 from src.data.patching import load_image
 from seg_decoder import SegDecoder
 
 GRID = 14
-NAMES = ["нет метки", "опухоль", "строма"]
-COL = np.array([[220, 50, 47], [38, 139, 210]], np.uint8)
+
+TISSUE_CLASSES = [TUMOR, STROMA_HORMONAL, STROMA_MATRIX, IMMUNE, STROMA]
+ALL_EVAL = [0] + TISSUE_CLASSES
+EVAL_NAMES = {c: CLASS_NAMES[c] for c in ALL_EVAL}
+
+COL = np.array([
+    [245, 245, 245],
+    [220,  50,  47],
+    [255, 165,   0],
+    [ 38, 139, 210],
+    [ 42, 161,  52],
+    [128, 128, 128],
+], np.uint8)
+
 _tf = T.Compose([T.Resize(224), T.CenterCrop(224), T.ToTensor(),
                  T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
@@ -42,13 +46,19 @@ def build_uni(device):
 
 def load_decoder(path, device):
     ckpt = torch.load(path, map_location=device)
-    n_classes = int(ckpt.get("n_classes", 3))
+    n_classes = int(ckpt["n_classes"])
     dec = SegDecoder(in_dim=1024, n_classes=n_classes).to(device)
     dec.load_state_dict(ckpt["state_dict"])
     dec.eval()
-    tumor, stroma = (0, 1) if n_classes == 2 else (1, 2)
-    print(f"декодер на {n_classes} класса, каналы опухоль/строма: {tumor}/{stroma}")
-    return dec, n_classes, tumor, stroma
+    channel_to_class = ckpt.get("channel_to_class")
+    if channel_to_class is None:
+        raise SystemExit(
+            f"в чекпоинте {path} нет channel_to_class.\n"
+            "Переобучи модель обновлённым seg_train2.py.")
+    channel_to_class = {int(k): int(v) for k, v in channel_to_class.items()}
+    print(f"декодер на {n_classes} каналов: " +
+          ", ".join(f"{c}->{CLASS_NAMES[v]}" for c, v in sorted(channel_to_class.items())))
+    return dec, n_classes, channel_to_class
 
 
 @torch.no_grad()
@@ -81,11 +91,17 @@ def report(pred, truth, where, title):
     acc = (pred[sel] == truth[sel]).mean()
     print(f"accuracy {acc:.3f}  ({sel.sum()/1e6:.1f} млн пикселей)")
     out = {"accuracy": round(float(acc), 4)}
-    for c, nm in ((1, "tumor"), (2, "stroma")):
+    for c in TISSUE_CLASSES:
+        nm = CLASS_NAMES[c]
         i, d = iou_dice(pred, truth, c, where)
-        print(f"  {nm:7s} IoU {i:.3f}  Dice {d:.3f}")
+        print(f"  {nm:20s} IoU {i:.3f}  Dice {d:.3f}")
         out[f"{nm}_iou"] = round(float(i), 4)
         out[f"{nm}_dice"] = round(float(d), 4)
+    present = [c for c in TISSUE_CLASSES if not np.isnan(iou_dice(pred, truth, c, where)[0])]
+    if present:
+        miou = np.mean([iou_dice(pred, truth, c, where)[0] for c in present])
+        print(f"  mIoU: {miou:.3f}")
+        out["miou"] = round(float(miou), 4)
     return out
 
 
@@ -97,8 +113,9 @@ def main():
     ap.add_argument("--seg-dir", default="data/processed/seg")
     ap.add_argument("--patch-size", type=int, default=256)
     ap.add_argument("--stride", type=int, default=256)
-    ap.add_argument("--cds", type=int, default=8, help="во сколько раз мельче карта результата")
+    ap.add_argument("--cds", type=int, default=8)
     ap.add_argument("--bs", type=int, default=64)
+    ap.add_argument("--min-confidence", type=float, default=0.5)
     ap.add_argument("--metrics-csv", default="outputs/results/seg_slide_metrics.csv")
     args = ap.parse_args()
 
@@ -111,17 +128,22 @@ def main():
     device = get_device()
     print("device:", device)
     uni = build_uni(device)
-    dec, n_classes, TUMOR, STROMA = load_decoder(args.model, device)
+    dec, n_classes, ch2cls = load_decoder(args.model, device)
 
     print("грузим H&E...")
-    img = load_image(args.he)   # ome.tif читается через tifffile, PIL его не берёт
+    img = load_image(args.he)
     H, W = img.shape[:2]
     ps, st, cds = args.patch_size, args.stride, args.cds
     Hc, Wc = H // cds, W // cds
     print(f"размер {W}x{H}, карта {Wc}x{Hc}, шаг {st}")
 
-    acc = np.zeros((Hc, Wc, n_classes), np.float32)
+    acc_map = np.zeros((Hc, Wc, n_classes), np.float32)
+    wsum = np.zeros((Hc, Wc), np.float32)
     pp = ps // cds
+
+    from seg_infer import cosine_window
+    win = cosine_window(pp)
+
     arrs, pos, done = [], [], 0
 
     def flush():
@@ -131,11 +153,15 @@ def main():
         probs = run_batch(uni, dec, arrs, device)
         for k, (yc, xc) in enumerate(pos):
             pm = probs[k].transpose(1, 2, 0)
-            pm = np.asarray(Image.fromarray((pm * 255).astype(np.uint8)).resize((pp, pp))) / 255.0
+            f = pm.shape[0] // pp
+            if f > 1:
+                pm = pm[:pp * f, :pp * f].reshape(pp, f, pp, f, -1).mean((1, 3))
             y1, x1 = min(yc + pp, Hc), min(xc + pp, Wc)
-            acc[yc:y1, xc:x1] += pm[:y1 - yc, :x1 - xc]
+            w = win[:y1 - yc, :x1 - xc]
+            acc_map[yc:y1, xc:x1] += pm[:y1 - yc, :x1 - xc] * w[:, :, None]
+            wsum[yc:y1, xc:x1] += w
         done += len(arrs)
-        arrs, pos = [], []
+        arrs.clear(); pos.clear()
         print(f"  патчей: {done}", end="\r")
 
     for y in range(0, H - ps, st):
@@ -150,14 +176,17 @@ def main():
     flush()
     print(f"\nвсего патчей: {done}")
 
-    covered = acc.sum(2) > 0
-    arg = acc.argmax(2)
-    pred = np.zeros(arg.shape, np.uint8)
-    pred[covered & (arg == TUMOR)] = 1
-    pred[covered & (arg == STROMA)] = 2
+    covered = wsum > 0
+    probs = np.zeros_like(acc_map)
+    probs[covered] = acc_map[covered] / wsum[covered][:, None]
+    conf = probs.max(2)
+    chan = probs.argmax(2)
 
-    # при шаге больше патча окна не смыкаются и часть среза остаётся непросмотренной;
-    # такие пиксели надо исключать из метрик, иначе они засчитываются как ошибки
+    pred = np.zeros((Hc, Wc), np.uint8)
+    ok = covered & (conf >= args.min_confidence)
+    for ch, cls in ch2cls.items():
+        pred[ok & (chan == ch)] = cls
+
     print(f"окном покрыто {100 * covered.mean():.1f}% карты (патч {ps}, шаг {st})")
 
     d = np.load(mask_npz)
@@ -168,27 +197,40 @@ def main():
     inside = covered & (truth > 0)
     rows = [
         {"scope": "покрытое окном", **report(pred, truth, covered,
-                                             "просмотренные пиксели, вместе с неразмеченным")},
+                                             "просмотренные пиксели, включая неразмеченное")},
         {"scope": "внутри разметки", **report(pred, truth, inside,
-                                              "просмотренные пиксели, где есть метка")},
+                                              "просмотренные пиксели с меткой")},
     ]
 
-    print("\nматрица ошибок по просмотренному (строки — истина, доли внутри строки):")
-    print(f"{'':12s}" + "".join(f"{n:>12s}" for n in NAMES))
-    for t in range(3):
+    print("\nматрица ошибок (строки — истина, доли внутри строки):")
+    header = "".join(f"{EVAL_NAMES[c]:>20s}" for c in ALL_EVAL)
+    print(f"{'':20s}{header}")
+    for t in ALL_EVAL:
         sel = covered & (truth == t)
         n = sel.sum()
         if not n:
             continue
-        fr = [(pred[sel] == p).sum() / n for p in range(3)]
-        print(f"{NAMES[t]:12s}" + "".join(f"{v:12.3f}" for v in fr))
+        fr = [(pred[sel] == p).sum() / n for p in ALL_EVAL]
+        print(f"{EVAL_NAMES[t]:20s}" + "".join(f"{v:20.3f}" for v in fr))
 
-    pt, pstr = int((pred == 1).sum()), int((pred == 2).sum())
-    tt = int((covered & (truth == 1)).sum())
-    tstr = int((covered & (truth == 2)).sum())
-    tsp_pred = 100 * pstr / (pt + pstr) if pt + pstr else float("nan")
-    tsp_true = 100 * tstr / (tt + tstr) if tt + tstr else float("nan")
-    print(f"\nдоля стромы: предсказано {tsp_pred:.1f}%, по разметке {tsp_true:.1f}%")
+    n_tum = int((pred[covered] == TUMOR).sum())
+    n_str = int(np.isin(pred[covered], STROMA_FOR_TSR).sum())
+    denom = n_tum + n_str
+    tsp_pred = 100 * n_str / denom if denom else float("nan")
+
+    t_tum = int((truth[covered] == TUMOR).sum())
+    t_str = int(np.isin(truth[covered], STROMA_FOR_TSR).sum())
+    t_denom = t_tum + t_str
+    tsp_true = 100 * t_str / t_denom if t_denom else float("nan")
+
+    print(f"\nTSR: предсказано {tsp_pred:.1f}%, по разметке {tsp_true:.1f}%")
+
+    for label, zones, total in [("предсказание", pred, n_str), ("разметка", truth, t_str)]:
+        if total:
+            print(f"  состав стромы ({label}):")
+            for c in STROMA_FOR_TSR:
+                k = int((zones[covered] == c).sum())
+                print(f"    {CLASS_NAMES[c]:20s}: {k:>8d}  ({100*k/total:.1f}%)")
 
     out_csv = Path(args.metrics_csv)
     ensure_dir(out_csv.parent)
@@ -196,7 +238,7 @@ def main():
     with open(out_csv, "a", newline="") as f:
         for r in rows:
             r = {"slide": args.slide, "model": args.model, "stride": st,
-                 "n_classes": n_classes,
+                 "n_classes": n_classes, "min_confidence": args.min_confidence,
                  "tsp_pred": round(tsp_pred, 2), "tsp_true": round(tsp_true, 2), **r}
             w = csv.DictWriter(f, fieldnames=list(r))
             if first:
@@ -209,8 +251,11 @@ def main():
     panels = [bg]
     for m in (truth, pred):
         ov = bg.copy()
-        for c, col in ((1, COL[0]), (2, COL[1])):
-            ov[m == c] = (0.45 * col + 0.55 * bg[m == c]).astype(np.uint8)
+        for c in TISSUE_CLASSES:
+            sel = m == c
+            if sel.any():
+                col = np.array(CLASS_COLORS[c])
+                ov[sel] = (0.45 * col + 0.55 * bg[sel]).astype(np.uint8)
         panels.append(ov)
     out_png = ensure_dir("outputs/results") / f"{args.slide}_eval.png"
     Image.fromarray(np.concatenate(panels, 1)).save(out_png)

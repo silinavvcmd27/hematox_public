@@ -1,25 +1,6 @@
 """Полнослайдовый инференс: один скрипт вместо трёх.
 
-ЗАМЕНЯЕТ СОБОЙ: seg_infer.py, seg_infer_img.py, seg_infer_svs.py.
-Те три файла — 465 строк, из которых различались примерно 40: чем открыть
-файл и откуда взять мкм/px. Скользящее окно было продублировано трижды и
-версии уже разошлись — только seg_infer_svs.py писал .npz, без которого не
-работает tsr_regions.py.
-
-ЧТО ЕЩЁ ИСПРАВЛЕНО по сравнению с прежними версиями:
-  1. Нормализация окраски по Macenko (--stain-norm, включена по умолчанию).
-     Раньше её не было вообще, поэтому на TCGA доля стромы систематически
-     отличалась от своих срезов.
-  2. Перекрытие тайлов: --stride по умолчанию половина патча, а не патч.
-     Встык (stride == patch) давало сетчатые швы на границах тайлов.
-  3. Порог уверенности --min-confidence: пиксели, где максимум вероятности
-     ниже порога, помечаются как «не размечено» и НЕ попадают в знаменатель
-     TSR. Раньше argmax брался без проверки величины.
-  4. Взвешивание по косинус-окну при склейке, чтобы центр тайла весил
-     больше края.
-  5. Зависимость от OpenCV убрана: масштабирование маски на numpy.
-
-Запуск (формат определяется по расширению):
+Запуск:
     python seg_infer.py --slide data/tcga_ov_flat/XXX.svs --model outputs/models/seg.pth
     python seg_infer.py --slide data/raw/ovary3/he.ome.tif --model ... --mpp 0.2125
 """
@@ -34,23 +15,19 @@ from PIL import Image
 
 from src.utils import get_device, hf_login, ensure_dir
 from src.utils import (IGNORE, BACKGROUND, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
-                       VESSELS_IMMUNE, STROMA_FOR_TSR, CLASS_COLORS, CLASS_NAMES)
+                       IMMUNE, STROMA, STROMA_FOR_TSR, CLASS_COLORS, CLASS_NAMES,
+                       TRAIN_CLASSES)
 from seg_decoder import SegDecoder
 from stain_norm import MacenkoNormalizer
 
 GRID = 14
-Image.MAX_IMAGE_PIXELS = None      # ome.tif бывает больше лимита PIL
+Image.MAX_IMAGE_PIXELS = None
 
 _tf = T.Compose([T.Resize(224), T.CenterCrop(224), T.ToTensor(),
                  T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
 
-# --------------------------------------------------------------------------
-# Чтение среза: единый интерфейс для .svs (openslide) и .tif/.png (PIL)
-# --------------------------------------------------------------------------
 class SlideReader:
-    """Читает произвольный прямоугольник среза в заданном масштабе."""
-
     def __init__(self, path, target_mpp, mpp=None):
         self.path = Path(path)
         if self.path.suffix.lower() in (".svs", ".ndpi", ".mrxs", ".scn"):
@@ -97,7 +74,7 @@ class SlideReader:
                 (int(x * self.ldown), int(y * self.ldown)), self.level,
                 (size, size)).convert("RGB"))
         tile = self.arr[y:y + size, x:x + size]
-        if tile.shape[:2] != (size, size):     # добить край до полного тайла
+        if tile.shape[:2] != (size, size):
             pad = np.full((size, size, 3), 255, np.uint8)
             pad[:tile.shape[0], :tile.shape[1]] = tile
             return pad
@@ -114,14 +91,12 @@ class SlideReader:
 
 
 def block_resize_nearest(a, out_h, out_w):
-    """Масштабирование карты классов без OpenCV, ближайший сосед."""
     yi = (np.arange(out_h) * a.shape[0] / out_h).astype(int).clip(0, a.shape[0] - 1)
     xi = (np.arange(out_w) * a.shape[1] / out_w).astype(int).clip(0, a.shape[1] - 1)
     return a[yi][:, xi]
 
 
 def cosine_window(n):
-    """Веса склейки: центр тайла весит больше края, швов не видно."""
     w = np.hanning(n + 2)[1:-1]
     return np.outer(w, w).astype(np.float32)
 
@@ -143,14 +118,11 @@ def load_decoder(path, device):
     dec = SegDecoder(in_dim=1024, n_classes=n_classes).to(device)
     dec.load_state_dict(ckpt["state_dict"])
     dec.eval()
-    # соответствие канал -> класс проекта пишется при обучении, не угадывается
     channel_to_class = ckpt.get("channel_to_class")
     if channel_to_class is None:
         raise SystemExit(
             f"в чекпоинте {path} нет channel_to_class.\n"
-            "Переобучи модель обновлённым seg_train2.py: угадывание "
-            "соответствия каналов классам по их числу уже приводило к "
-            "перепутанным опухоли и строме.")
+            "Переобучи модель обновлённым seg_train2.py.")
     channel_to_class = {int(k): int(v) for k, v in channel_to_class.items()}
     print(f"декодер на {n_classes} каналов: " +
           ", ".join(f"{c}->{CLASS_NAMES[v]}" for c, v in sorted(channel_to_class.items())))
@@ -224,8 +196,7 @@ def main():
             return
         probs = run_batch(uni, dec, arrs, device)
         for k, (yc, xc) in enumerate(pos):
-            pm = probs[k].transpose(1, 2, 0)          # [112, 112, C]
-            # уменьшаем до размера ячейки карты усреднением, без OpenCV
+            pm = probs[k].transpose(1, 2, 0)
             f = pm.shape[0] // pp
             if f > 1:
                 pm = pm[:pp * f, :pp * f].reshape(pp, f, pp, f, -1).mean((1, 3))
@@ -240,7 +211,7 @@ def main():
     for y in range(0, max(1, sl.H - ps + 1), stride):
         for x in range(0, max(1, sl.W - ps + 1), stride):
             reg = sl.read(x, y, ps)
-            if (reg.mean(-1) > 220).mean() > 0.85:    # пустое стекло
+            if (reg.mean(-1) > 220).mean() > 0.70:
                 skipped += 1
                 continue
             if norm is not None:
@@ -252,7 +223,6 @@ def main():
     flush()
     print(f"\nпатчей обработано: {done}, пропущено как фон: {skipped}")
 
-    # --- вероятности -> классы проекта ---
     covered = wsum > 0
     probs = np.zeros_like(acc)
     probs[covered] = acc[covered] / wsum[covered][:, None]
@@ -266,7 +236,16 @@ def main():
     low = int((covered & ~ok).sum())
     print(f"окном покрыто {100*covered.mean():.1f}% карты; "
           f"{low} ячеек ниже порога уверенности {args.min_confidence} -> не размечено")
-
+    
+    ALL_TISSUE = [TUMOR, STROMA_HORMONAL, STROMA_MATRIX, IMMUNE, STROMA]
+    
+    import cv2
+    tissue = np.isin(zones, ALL_TISSUE).astype(np.uint8)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    tissue = cv2.morphologyEx(tissue, cv2.MORPH_OPEN, kernel)
+    zones[tissue == 0] = IGNORE
+    
+    
     # --- TSR ---
     n_tum = int((zones == TUMOR).sum())
     n_str = int(np.isin(zones, STROMA_FOR_TSR).sum())
@@ -274,16 +253,13 @@ def main():
     if denom == 0:
         print("TSR: NA (в срезе нет ни опухоли, ни стромы)")
     elif n_tum == 0:
-        print("TSR: NA (опухоли не найдено; доля стромы без опухоли не TSR)")
+        print("TSR: NA (опухоли не найдено)")
     else:
         print(f"TSR = {n_str/denom:.3f}  (опухоль {n_tum}, строма {n_str} ячеек)")
         for c in STROMA_FOR_TSR:
             k = int((zones == c).sum())
             if n_str:
                 print(f"    {CLASS_NAMES[c]}: {k} ячеек, {100*k/n_str:.1f}% всей стромы")
-    n_vi = int((zones == VESSELS_IMMUNE).sum())
-    if n_vi:
-        print(f"сосуды и иммунные клетки: {n_vi} ячеек (в TSR не входят)")
 
     # --- картинка ---
     thumb = sl.thumbnail(Wc, Hc)
@@ -296,12 +272,8 @@ def main():
         if m.any():
             ov[m] = (0.45 * np.array(col) + 0.55 * thumb[m]).astype(np.uint8)
 
-    # Легенда прямо на картинке: без неё цвета надо помнить наизусть, а карту
-    # смотрят обычно не те, кто её считал. Рисуется через PIL, чтобы не тянуть
-    # matplotlib в инференс.
     canvas = np.concatenate([thumb, ov], 1)
-    shown = [c for c in (TUMOR, STROMA_HORMONAL, STROMA_MATRIX, VESSELS_IMMUNE)
-             if (zr == c).any()]
+    shown = [c for c in ALL_TISSUE if (zr == c).any()]
     if shown:
         from PIL import ImageDraw, ImageFont
         pad, box, gap = 10, max(12, canvas.shape[0] // 60), 6
@@ -310,10 +282,7 @@ def main():
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", box)
         except OSError:
             font = ImageFont.load_default()
-        # знаменатель — размеченная ткань: фон и «не размечено» в доли не входят,
-        # иначе проценты зависели бы от того, сколько на стекле пустого места
-        n_tis = int(np.isin(zones, [TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
-                                    VESSELS_IMMUNE]).sum())
+        n_tis = int(np.isin(zones, ALL_TISSUE).sum())
         rows = [(c, "%s — %.1f%%" % (CLASS_NAMES[c],
                                      100 * (zones == c).sum() / max(n_tis, 1)))
                 for c in shown]
@@ -337,7 +306,6 @@ def main():
                           (Path(args.slide).stem + "_seg_map.png"))
     Image.fromarray(canvas).save(out)
 
-    # карта классов, чтобы пересчитывать TSR по областям без прогона UNI
     npz = Path(out).with_suffix(".npz")
     np.savez_compressed(npz, cls=zones, mpp=sl.mpp * cds,
                         min_confidence=args.min_confidence,

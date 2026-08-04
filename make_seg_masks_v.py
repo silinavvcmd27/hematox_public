@@ -1,16 +1,28 @@
-# Пиксельная истина (Вороной): каждый пиксель ткани = класс ближайшей клетки
-# в пределах max_dist, без дырок. tumor=1, stroma=2, фон/undefined=0.
-# При нехватке памяти увеличь --downscale (3 или 4).
-
 import argparse
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from src.utils import ensure_dir, IGNORE, TUMOR, STROMA_HORMONAL, STROMA_MATRIX
+from src.utils import ensure_dir, CLASS_NAMES
 from src.data.seurat_labels import CellTypeMapper
 
-CLS = {"tumor": 1, "stroma": 2}
-COL = {1: (220, 50, 47), 2: (38, 139, 210)}
+CLS = {
+    "tumor": 1,
+    "stroma_hormonal": 2,
+    "stroma_matrix": 3,
+    "immune": 4,
+    "stroma": 5,
+}
+
+COL = np.array([
+    [245, 245, 245],
+    [220,  50,  47],
+    [255, 165,   0],
+    [ 38, 139, 210],
+    [ 42, 161,  52],
+    [128, 128, 128],
+], np.uint8)
+
+SEED_PRIORITY = [1, 2, 3, 4, 5]
 
 
 def he_shape(path):
@@ -62,15 +74,17 @@ def main():
     args = ap.parse_args()
 
     import cv2
-    from scipy.ndimage import distance_transform_edt
+    from scipy.spatial import cKDTree
 
     df = pd.read_csv(args.cells)
     mapper = CellTypeMapper(args.map)
-    df["zone"] = mapper.map_series(df["cell_type"])
+    sub_col = df["cell_subtype"] if "cell_subtype" in df.columns else None
+    df["zone"] = mapper.map_series(df["cell_type"], sub_col)
     df = df[df["zone"].isin(CLS)].copy()
     df["cls"] = df["zone"].map(CLS).astype(int)
     coords = df[["x", "y"]].to_numpy(float)
-    print("%s: клеток tumor/stroma: %d %s" % (args.slide, len(df), df["zone"].value_counts().to_dict()))
+    print("%s: клеток с метками: %d %s" % (
+        args.slide, len(df), df["zone"].value_counts().to_dict()))
 
     H, W = he_shape(args.he)
     ds = args.downscale
@@ -81,61 +95,39 @@ def main():
     max_dist = max(2.0, args.max_dist_factor * nn_ds)
     print("медианное расстояние ~%.1fpx, заполняем до %.1fpx" % (nn_ds, max_dist))
 
-    seeds = np.zeros((Hd, Wd), np.uint8)
-    xs = np.clip((coords[:, 0] / ds).astype(int), 0, Wd - 1)
-    ys = np.clip((coords[:, 1] / ds).astype(int), 0, Hd - 1)
-    cl = df["cls"].to_numpy()
-    order = np.argsort(-cl)
-    seeds[ys[order], xs[order]] = cl[order]
+    print("строю Вороной через cKDTree...")
+    cell_coords_ds = coords / ds
+    cell_cls = df["cls"].to_numpy()
+    tree = cKDTree(cell_coords_ds[:, ::-1])
 
-    # БЫЛО: distance_transform_edt(..., return_indices=True) выделяет три
-    # массива размером во всю карту. На срезе 40000x40000 это 38 ГБ, и скрипт
-    # падает; в комментарии выше сказано «увеличь downscale», но
-    # run_pipeline.sh этот аргумент не передавал.
-    #
-    # СТАЛО: ближайшая клетка ищется деревом по координатам клеток, карта
-    # обрабатывается полосами. Память линейна по числу клеток (сотни тысяч), а
-    # не по площади среза (сотни миллионов): 2.6 ГБ вместо 38. Результат
-    # совпадает с прежним на 99.7% — расхождение потому, что прежний способ
-    # округлял координаты клеток до целого пикселя, а дерево работает с
-    # точными.
-    print("строю Вороной по дереву клеток...")
-    from scipy.spatial import cKDTree
-
-    tree = cKDTree(np.stack([xs, ys], 1).astype(float))
-    mask = np.full((Hd, Wd), IGNORE, np.uint8)
-    # высоту полосы считаем от ширины карты: на точку уходит ~30 байт
-    chunk = max(1, min(Hd, int(1.0e9 / (30 * Wd))))
-    gx = np.arange(Wd, dtype=np.float32)
-    for y0 in range(0, Hd, chunk):
-        y1 = min(y0 + chunk, Hd)
-        gy = np.arange(y0, y1, dtype=np.float32)
-        pts = np.stack(np.meshgrid(gx, gy), -1).reshape(-1, 2)
-        _, idx = tree.query(pts, k=1, distance_upper_bound=max_dist, workers=-1)
-        band = np.full(len(pts), IGNORE, np.uint8)
-        hit = idx < len(cl)          # вне радиуса дерево возвращает len(tree)
-        band[hit] = cl[idx[hit]]
-        mask[y0:y1] = band.reshape(y1 - y0, Wd)
-    del tree
+    gy, gx = np.mgrid[:Hd, :Wd]
+    pixels = np.column_stack([gy.ravel(), gx.ravel()])
+    dist, idx = tree.query(pixels, k=1, workers=-1)
+    mask = cell_cls[idx].astype(np.uint8)
+    mask[dist > max_dist] = 0
+    mask = mask.reshape(Hd, Wd)
 
     out = ensure_dir(args.out_dir)
     np.savez_compressed(out / ("%s_mask.npz" % args.slide), mask=mask, downscale=ds)
     tot = Hd * Wd
-    print("маска: опухоль %.1f%%  строма гормональная %.1f%%  матриксная %.1f%%  "
-          "не размечено %.1f%%"
-          % (100*(mask == TUMOR).sum()/tot,
-             100*(mask == STROMA_HORMONAL).sum()/tot,
-             100*(mask == STROMA_MATRIX).sum()/tot,
-             100*(mask == IGNORE).sum()/tot))
+    for name, val in CLS.items():
+        pct = 100 * (mask == val).sum() / tot
+        print("  %s: %.1f%%" % (name, pct))
 
     bg = small_he(args.he)
-    msmall = cv2.resize(mask, (bg.shape[1], bg.shape[0]), interpolation=cv2.INTER_NEAREST)
+    msmall = cv2.resize(mask, (bg.shape[1], bg.shape[0]),
+                        interpolation=cv2.INTER_NEAREST)
     overlay = bg.copy()
-    for c, col in COL.items():
-        overlay[msmall == c] = (0.45 * np.array(col) + 0.55 * bg[msmall == c]).astype(np.uint8)
+    for val in range(1, len(COL)):
+        m = msmall == val
+        if m.any():
+            overlay[m] = (0.45 * COL[val].astype(float)
+                          + 0.55 * bg[m].astype(float)).astype(np.uint8)
+
     from PIL import Image
     res = ensure_dir("outputs/results")
-    Image.fromarray(np.concatenate([bg, overlay], 1)).save(res / ("%s_seg_truth.png" % args.slide))
+    Image.fromarray(np.concatenate([bg, overlay], 1)).save(
+        res / ("%s_seg_truth.png" % args.slide))
     print("проверка: outputs/results/%s_seg_truth.png" % args.slide)
 
     ps, st = args.patch_size, args.stride
@@ -145,10 +137,10 @@ def main():
             sub = mask[y0 // ds:(y0 + ps) // ds, x0 // ds:(x0 + ps) // ds]
             lab = (sub > 0).mean()
             if lab >= args.min_label_frac:
-                rows.append({"x0": x0, "y0": y0,
-                             "frac_tumor": float((sub == 1).mean()),
-                             "frac_stroma": float((sub == 2).mean()),
-                             "label_frac": float(lab)})
+                row = {"x0": x0, "y0": y0, "label_frac": float(lab)}
+                for name, val in CLS.items():
+                    row[f"frac_{name}"] = float((sub == val).mean())
+                rows.append(row)
     pd.DataFrame(rows).to_csv(out / ("%s_patches.csv" % args.slide), index=False)
     print("патчей с разметкой: %d -> %s/%s_patches.csv" % (len(rows), out, args.slide))
 

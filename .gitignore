@@ -1,19 +1,27 @@
-/data/
+# крупные данные и веса — не в git
+data/
+outputs/
+runs/
+plots_CAFs/
+*.svs
+*.tif
+*.ome.tif
+*.pth
+*.npz
+*.h5ad
+*.rds
+*.tar.gz
+*.tsv
+*.csv
+
+# генерируемое
+*.png
+*.jpg
+*.log
+
+# кэш и временное
 __pycache__/
 *.pyc
-
-# Тяжёлые файлы результатов — не загружаем на GitHub
-outputs/results/*.png
-outputs/results/*.npz
-outputs/results/TCGA-*
-
-# Модели тоже исключаем (все .pth файлы)
-*.pth
-
-# Исключения (маленькие важные файлы)
-!outputs/results/*.csv
-!outputs/results/tcga_km_tsp.png
 *.bak
-hematox_backup_*
-hematox_backup_*
-hematox_backup_*
+.ipynb_checkpoints/
+Untitled*.ipynb

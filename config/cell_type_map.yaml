@@ -1,68 +1,201 @@
-# Annotation_main_types_new -> tumor / stroma_hormonal / stroma_matrix / undefined
-#
-# ЧТО ИЗМЕНИЛОСЬ: класс "stroma" разделён на два по литобзору (раздел 1.4):
-#   stroma_hormonal — собственная строма яичника, способная к стероидогенезу
-#   stroma_matrix   — десмопластическая строма: CAF + внеклеточный матрикс
-#
-# ВАЖНО: иммунные и эндотелиальные клетки БОЛЬШЕ НЕ строма.
-# Раньше T/B/NK/Myeloid/Endothelial попадали в "stroma", из-за чего "доля
-# стромы" была на самом деле "доля всего, что не опухоль" — а TSR в
-# литературе это про соединительную ткань, не про лимфоциты.
-# Теперь они в отдельной группе и по умолчанию не считаются в TSR.
-
 match_mode: exact
 case_insensitive: true
-
+unmapped_policy: undefined
+subtype_groups:
+  stroma_hormonal:
+  - CYP11A1+ fibroblasts
+  - STAR+ C7+ CAFs 2 (SFRP1)
+  - STAR+ C7+ CAFs 1 (SFRP1)
+  - STAR+ C7+ CAFs 3 (SFRP4)
+  - CPXM2+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP1)
+  - NOTCH3+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP4)
+  - C7+ CAFs (SFRP4/SFRP1)
+  - STAR+ C7+ CAFs 2
+  - STAR+ C7+ CAFs 1
+  - MYLK+ C7+ CAFs
+  - C7+ CAFs
+  - C7+ CAFs 1
+  - C7+ CAFs 2
+  - C7+ NFs
+  - IL6+ C7+ NFs
+  - MFAP5+ C7+ NFs
+  - SFRP4+ NFs
+  - Granulosa cells
+  stroma_matrix:
+  - Other CAFs
+  - cl-mCAFs 1
+  - cl-mCAFs 2
+  - CCL11+ cl-mCAFs
+  - tmCAFs
+  - iapCAFs
+  - apCAFs 1
+  - apCAFs 2
+  - tCAFs
+  - tCAFs 2
+  - infCAFs 1
+  - infCAFs 2
+  - hypCAFs
+  - prolifCAFs
+  - CST1+ CAFs
+  - NOTCH3+ mCAFs
+  - Boarder tumor NFs
+  stroma:
+  - SMC 1
+  - SMC 2
+  - SMC 3
+  - SMC 4
+  - Vascular SMC
+  - Pery 1
+  - Pery 2
+  - Pery 3
+  - Pery 4
+  - Pericytes
+  - Perycites
+  - Pericytes (tumor) 1
+  - Pericytes (tumor) muscle-like
+  - Pericytes (tumor) fibroblasts-like
+  - Arterial EC
+  - Venous EC
+  - HEV
+  - KDR+ EC
+  - Capillary EC
+  - Other EC
+  - Proliferatice EC_pery
+  - Lymphatic EC
+  - Mesothelial cells
+  immune:
+  - T cells CD4
+  - T cells CD8
+  - Tregs
+  - NK cells
+  - B cells mature
+  - B cells naive
+  - Plasma cells IgG
+  - Plasma cells IgA
+  - Macrophages M1
+  - Macrophages M2
+  - Monocytes
+  - Proliferative lymphoid cells
+  - DC mature
+  - DC immature
+  - pDC
+  - Mast cells
+  - Neutrophils
+  undefined:
+  - Hs
 groups:
   tumor:
-    - Cancer cells
-
-  # Гормон-продуцирующая (функционирующая) строма яичника.
-  # Морфология на H&E: рыхлые веретеновидные клетки, эозинофильная или
-  # светлая цитоплазма. Молекулярно: ферменты синтеза стероидов
-  # (STAR, CYP11A1, CYP17A1, HSD3B2), FOXL2, NR5A1, INHA.
+  - Cancer cells
+  - Malignant Cells Lining Cyst
   stroma_hormonal:
-    - NFs                      # normal fibroblasts яичниковой стромы
-    - Granulosa cells
-    - Theca cells
-    - Luteinized cells
-    - Steroidogenic cells
-
-  # Матриксная (десмопластическая) строма.
-  # Морфология: плотные пучки коллагеновых волокон, мало ядер.
-  # Молекулярно: COL1A1/COL1A2/COL3A1, FAP, POSTN, LUM, DCN, ACTA2.
+  - Granulosa cells
+  - Theca cells
+  - Luteinized cells
+  - Steroidogenic cells
+  - CYP11A1+ fibroblasts
+  - STAR+ C7+ CAFs 2 (SFRP1)
+  - STAR+ C7+ CAFs 1 (SFRP1)
+  - STAR+ C7+ CAFs 3 (SFRP4)
+  - CPXM2+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP1)
+  - NOTCH3+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP4)
+  - C7+ CAFs (SFRP4/SFRP1)
+  - STAR+ C7+ CAFs 2
+  - STAR+ C7+ CAFs 1
+  - MYLK+ C7+ CAFs
+  - C7+ CAFs
+  - C7+ CAFs 1
+  - C7+ CAFs 2
+  - C7+ NFs
+  - IL6+ C7+ NFs
+  - MFAP5+ C7+ NFs
+  - SFRP4+ NFs
   stroma_matrix:
-    - CAFs
-    - Fibroblasts
-    - SMC
-    - Pery tumor
-    - Pery normal
-    - Perycites
-    - Pericytes
-
-  # Не строма для целей TSR: сосуды и иммунные клетки.
-  # Их доля считается отдельно как самостоятельный признак.
-  vessels_immune:
-    - EC cells tumor
-    - EC cells normal
-    - Endo
-    - Endothelial cells
-    - Lymphatic endothelial cells
-    - T cells
-    - B cells
-    - NK
-    - Lymph
-    - Lymphoid cells
-    - Plasma cells
-    - Plasma
-    - Myeloid cells
-    - Mye
-    - DC
-    - Mast cells
-
+  - CAFs
+  - Fibroblasts
+  - Other CAFs
+  - cl-mCAFs 1
+  - cl-mCAFs 2
+  - CCL11+ cl-mCAFs
+  - tmCAFs
+  - iapCAFs
+  - apCAFs 1
+  - apCAFs 2
+  - tCAFs
+  - tCAFs 2
+  - infCAFs 1
+  - infCAFs 2
+  - hypCAFs
+  - prolifCAFs
+  - CST1+ CAFs
+  - NOTCH3+ mCAFs
+  - Boarder tumor NFs
+  stroma:
+  - NFs
+  - EC cells tumor
+  - EC cells normal
+  - Endo
+  - Endothelial cells
+  - Lymphatic endothelial cells
+  - Pery tumor
+  - Pery normal
+  - Perycites
+  - Pericytes
+  - SMC
+  - SMC 1
+  - SMC 2
+  - SMC 3
+  - SMC 4
+  - Vascular SMC
+  - Pery 1
+  - Pery 2
+  - Pery 3
+  - Pery 4
+  - Pericytes (tumor) 1
+  - Pericytes (tumor) muscle-like
+  - Pericytes (tumor) fibroblasts-like
+  - Arterial EC
+  - Venous EC
+  - HEV
+  - KDR+ EC
+  - Capillary EC
+  - Other EC
+  - Proliferatice EC_pery
+  - Lymphatic EC
+  - Mesothelial cells
+  immune:
+  - T cells
+  - B cells
+  - NK
+  - Lymph
+  - Lymphoid cells
+  - Plasma cells
+  - Plasma
+  - Myeloid cells
+  - Mye
+  - DC
+  - Mast cells
+  - macrophages
+  - monocytes
+  - T cells CD4
+  - T cells CD8
+  - Tregs
+  - NK cells
+  - B cells mature
+  - B cells naive
+  - Plasma cells IgG
+  - Plasma cells IgA
+  - Macrophages M1
+  - Macrophages M2
+  - Proliferative lymphoid cells
+  - DC mature
+  - DC immature
+  - pDC
+  - Neutrophils
   undefined:
-    - Ciliated epithelial cells
-    - Fallopian tube epithelium
-    - Mesothelial cells
-
-unmapped_policy: undefined
+  - Ciliated epithelial cells
+  - Fallopian tube epithelium
+  - Hs
