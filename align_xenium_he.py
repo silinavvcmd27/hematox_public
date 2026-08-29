@@ -37,6 +37,22 @@ def candidates(xy_um, A, t):
         "inverse_um": (Ainv @ (xy_um - t).T).T,
     }
 
+ORIENTS = ("xy", "xy-fx", "xy-fy", "xy-fxfy", "yx", "yx-fx", "yx-fy", "yx-fxfy")
+
+
+def orient(pts, tag, W, H):
+    """Разворот облака точек внутри кадра H&E: перестановка осей и отражения.
+    Матрица от прибора задаёт масштаб и сдвиг, но не ловит поворот картинки на
+    90 градусов и зеркало, а у Prime-срезов H&E лежит именно так. Подобрать tag
+    можно check_alignment.py, по доле клеток, попавших на ткань."""
+    x, y = (pts[:, 1], pts[:, 0]) if tag.startswith("yx") else (pts[:, 0], pts[:, 1])
+    if "fx" in tag:
+        x = W - x
+    if "fy" in tag:
+        y = H - y
+    return np.stack([x, y], 1)
+
+
 def coverage(he, Dx, Dy):
     x, y = he[:, 0], he[:, 1]
     return float(((x >= 0) & (x < Dx) & (y >= 0) & (y < Dy)).mean())
@@ -47,6 +63,14 @@ def main():
     ap.add_argument("--align", required=True)
     ap.add_argument("--he", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--variant", choices=["forward_px", "forward_um", "inverse_px", "inverse_um"],
+                    help="какой вариант матрицы брать, по умолчанию подбирается по покрытию")
+    ap.add_argument("--orient", choices=ORIENTS,
+                    help="разворот кадра, подобранный check_alignment.py")
+    ap.add_argument("--shift-x", type=float, default=0.0,
+                    help="поправка по x в пикселях H&E, из check_alignment.py")
+    ap.add_argument("--shift-y", type=float, default=0.0,
+                    help="поправка по y в пикселях H&E")
     args = ap.parse_args()
 
     df = pd.read_csv(args.cells)
@@ -56,29 +80,33 @@ def main():
     print("H&E размер: W=%d H=%d" % (W, H))
 
     cands = candidates(xy, A, t)
-    print("покрытие:")
-    for nm, he in cands.items():
-        for (Dx, Dy), tag in [((W, H), "WH"), ((H, W), "HW")]:
-            print("  %-12s [%s]: %.3f" % (nm, tag, coverage(he, Dx, Dy)))
 
-    he = cands["inverse_px"]
-    covWH, covHW = coverage(he, W, H), coverage(he, H, W)
-    tag = "WH" if covWH >= covHW else "HW"
-    cov = max(covWH, covHW)
-    name = "inverse_px"
-    if cov < 0.85:
-        best = None
+    if args.variant and args.orient:
+        name, tag = args.variant, args.orient
+        he = orient(cands[name], tag, W, H)
+        print("задано вручную: %s [%s], покрытие %.3f" % (name, tag, coverage(he, W, H)))
+    else:
+        print("покрытие:")
         for nm, h in cands.items():
-            for (Dx, Dy), tg in [((W, H), "WH"), ((H, W), "HW")]:
-                c = coverage(h, Dx, Dy)
-                if best is None or c > best[0]:
-                    best = (c, nm, tg, h)
-        cov, name, tag, he = best
-        print("ВНИМАНИЕ: inverse_px <0.85, запасной вариант")
-    print("выбрано: %s [%s], покрытие %.3f" % (name, tag, cov))
+            for tg in ("xy", "yx"):
+                print("  %-12s [%s]: %.3f" % (nm, tg, coverage(orient(h, tg, W, H), W, H)))
 
-    if tag == "HW":
-        he = he[:, ::-1]
+        name = "inverse_px"
+        covs = {tg: coverage(orient(cands[name], tg, W, H), W, H) for tg in ("xy", "yx")}
+        tag, cov = max(covs.items(), key=lambda kv: kv[1])
+        if cov < 0.85:
+            print("ВНИМАНИЕ: inverse_px <0.85, запасной вариант")
+            cov, name, tag = max(
+                (coverage(orient(h, tg, W, H), W, H), nm, tg)
+                for nm, h in cands.items() for tg in ("xy", "yx"))
+        he = orient(cands[name], tag, W, H)
+        print("выбрано: %s [%s], покрытие %.3f" % (name, tag, cov))
+        print("покрытие не различает зеркала, разворот проверьте check_alignment.py")
+
+    if args.shift_x or args.shift_y:
+        he = he + np.array([args.shift_x, args.shift_y])
+        print("поправка: dx=%.0f dy=%.0f" % (args.shift_x, args.shift_y))
+
     out = df.copy()
     out["x"] = he[:, 0]; out["y"] = he[:, 1]
     inside = (out["x"] >= 0) & (out["x"] < W) & (out["y"] >= 0) & (out["y"] < H)

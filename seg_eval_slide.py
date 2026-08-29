@@ -9,6 +9,7 @@ import torchvision.transforms as T
 from PIL import Image
 
 from src.utils import (get_device, hf_login, ensure_dir, CLASS_NAMES,
+from src.stain import slide_normalizer
                        TRAIN_CLASSES, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
                        IMMUNE, STROMA, STROMA_FOR_TSR, IGNORE, CLASS_COLORS)
 from src.data.patching import load_image
@@ -62,7 +63,9 @@ def load_decoder(path, device):
 
 
 @torch.no_grad()
-def run_batch(uni, dec, arrs, device):
+def run_batch(uni, dec, arrs, device, norm=None):
+    if norm is not None:
+        arrs = [norm(a) for a in arrs]
     x = torch.stack([_tf(Image.fromarray(a)) for a in arrs]).to(device)
     f = uni.forward_features(x)
     if f.shape[1] == GRID * GRID + 1:
@@ -117,7 +120,10 @@ def main():
     ap.add_argument("--bs", type=int, default=64)
     ap.add_argument("--min-confidence", type=float, default=0.5)
     ap.add_argument("--metrics-csv", default="outputs/results/seg_slide_metrics.csv")
+    ap.add_argument("--stain-ref", default=None,
+                    help="npz эталона окраски, тот же что при seg_extract.py")
     args = ap.parse_args()
+    norm = slide_normalizer(args.he, args.stain_ref) if args.stain_ref else None
 
     import cv2
 
@@ -150,7 +156,7 @@ def main():
         nonlocal arrs, pos, done
         if not arrs:
             return
-        probs = run_batch(uni, dec, arrs, device)
+        probs = run_batch(uni, dec, arrs, device, norm)
         for k, (yc, xc) in enumerate(pos):
             pm = probs[k].transpose(1, 2, 0)
             f = pm.shape[0] // pp

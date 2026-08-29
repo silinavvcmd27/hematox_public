@@ -14,7 +14,9 @@ import torchvision.transforms as T
 from PIL import Image
 
 from src.utils import get_device, hf_login, ensure_dir
+from src.stain import slide_normalizer
 from src.utils import (IGNORE, BACKGROUND, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
+from src.stain import slide_normalizer
                        IMMUNE, STROMA, STROMA_FOR_TSR, CLASS_COLORS, CLASS_NAMES,
                        TRAIN_CLASSES)
 from seg_decoder import SegDecoder
@@ -130,7 +132,9 @@ def load_decoder(path, device):
 
 
 @torch.no_grad()
-def run_batch(uni, dec, arrs, device):
+def run_batch(uni, dec, arrs, device, norm=None):
+    if norm is not None:
+        arrs = [norm(a) for a in arrs]
     x = torch.stack([_tf(Image.fromarray(a)) for a in arrs]).to(device)
     f = uni.forward_features(x)
     if f.shape[1] == GRID * GRID + 1:
@@ -159,7 +163,10 @@ def main():
     ap.add_argument("--stain-ref", default=None,
                     help="картинка-эталон окраски; без неё берётся табличный эталон")
     ap.add_argument("--out", default=None)
+    ap.add_argument("--stain-ref", default=None,
+                    help="npz эталона окраски, тот же что при seg_extract.py")
     args = ap.parse_args()
+    norm = slide_normalizer(args.he, args.stain_ref) if args.stain_ref else None
 
     stride = args.stride or args.patch_size // 2
     device = get_device()
@@ -194,7 +201,7 @@ def main():
         nonlocal arrs, pos, done
         if not arrs:
             return
-        probs = run_batch(uni, dec, arrs, device)
+        probs = run_batch(uni, dec, arrs, device, norm)
         for k, (yc, xc) in enumerate(pos):
             pm = probs[k].transpose(1, 2, 0)
             f = pm.shape[0] // pp

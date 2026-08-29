@@ -5,8 +5,12 @@
 # среза. Раньше он был фиксирован в пикселях, из-за чего ovary3 с его вдвое
 # мельче пикселем обрабатывался на другом увеличении.
 #
+# Окраска приводится к эталонному срезу до кодирования (--stain-ref), потому что
+# UNI заморожен и цветовой сдвиг между срезами уходит прямо в признаки.
+#
 # python seg_extract.py --slide ovary_prime_he \
-#   --he data/raw/ovary_prime/..._he_image.ome.tif --max-patches 12000
+#   --he data/raw/ovary_prime/..._he_image.ome.tif --max-patches 12000 \
+#   --stain-ref data/processed/stain_ref_prime.npz
 
 import argparse
 from pathlib import Path
@@ -18,6 +22,7 @@ import torchvision.transforms as T
 from PIL import Image
 
 from src.utils import load_config, get_device, hf_login, ensure_dir
+from src.stain import hed_jitter, slide_normalizer
 from slide_mpp import slide_mpp
 
 GRID = 14
@@ -107,6 +112,10 @@ def main():
                     help="куда писать feat.npz (по умолчанию = seg-dir)")
     ap.add_argument("--superpixel", type=int, default=0,
                     help="n_segments SLIC (0=выкл): метки по суперпикселям вместо Вороного")
+    ap.add_argument("--stain-ref", default=None,
+                    help="npz эталона окраски (см. python -m src.stain)")
+    ap.add_argument("--stain-jitter", type=int, default=0,
+                    help="сколько копий каждого патча со сдвинутой окраской добавить")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -125,7 +134,8 @@ def main():
 
     if args.max_patches and len(man) > args.max_patches:
         man = man.sample(args.max_patches, random_state=42).reset_index(drop=True)
-    print(f"{args.slide}: позиций {len(man)}, вариантов на позицию {args.augment}")
+    per_pos = args.augment * (1 + args.stain_jitter)
+    print(f"{args.slide}: позиций {len(man)}, вариантов на позицию {per_pos}")
 
     from src.data.patching import load_image
     import cv2
@@ -133,6 +143,15 @@ def main():
     img = load_image(args.he)
     H, W = img.shape[:2]
 
+    norm = None
+    if args.stain_ref:
+        # матрица окраски оценивается по всему срезу: на одном патче она пляшет
+        norm = slide_normalizer(args.he, args.stain_ref)
+        print(f"окраска приводится к {args.stain_ref}")
+        print("  своя матрица:", np.round(norm.src.he.T, 3).tolist())
+        print("  эталонная:   ", np.round(norm.ref.he.T, 3).tolist())
+
+    rng = np.random.default_rng(42)
     patches, masks, skipped = [], [], 0
     for r in man.itertuples(index=False):
         x0, y0 = int(r.x0), int(r.y0)
@@ -140,6 +159,8 @@ def main():
             skipped += 1
             continue
         p = img[y0:y0 + ps, x0:x0 + ps]
+        if norm is not None:
+            p = norm(p)
         m = mask[y0 // ds:(y0 + ps) // ds, x0 // ds:(x0 + ps) // ds]
         m = cv2.resize(m, (OUT, OUT), interpolation=cv2.INTER_NEAREST)
         if args.superpixel:
@@ -147,6 +168,9 @@ def main():
         for pv, mv in variants(p, m, args.augment):
             patches.append(pv)
             masks.append(mv)
+            for _ in range(args.stain_jitter):
+                patches.append(hed_jitter(pv, rng=rng))
+                masks.append(mv)
     del img
     if skipped:
         print(f"  не влезли в край: {skipped} позиций")
@@ -159,7 +183,8 @@ def main():
     y = np.stack(masks).astype(np.uint8)
 
     out = ensure_dir(args.out_dir or args.seg_dir) / f"{args.slide}_feat.npz"
-    np.savez_compressed(out, X=X, y=y, patch_px=ps, patch_um=args.patch_um)
+    np.savez_compressed(out, X=X, y=y, patch_px=ps, patch_um=args.patch_um,
+                        stain_ref=str(args.stain_ref or ""))
     print(f"\nsaved {out}  X={X.shape} y={y.shape}")
     print("пиксели:", {int(k): int(v) for k, v in zip(*np.unique(y, return_counts=True))})
 

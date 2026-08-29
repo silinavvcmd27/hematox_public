@@ -17,6 +17,7 @@ import torchvision.transforms as T
 from PIL import Image
 
 from src.utils import get_device, hf_login, ensure_dir
+from src.stain import slide_normalizer
 from seg_decoder import SegDecoder
 
 GRID = 14
@@ -49,7 +50,9 @@ def load_decoder(path, device):
 
 
 @torch.no_grad()
-def run_batch(uni, dec, arrs, device):
+def run_batch(uni, dec, arrs, device, norm=None):
+    if norm is not None:
+        arrs = [norm(a) for a in arrs]
     x = torch.stack([_tf(Image.fromarray(a)) for a in arrs]).to(device)
     f = uni.forward_features(x)
     if f.shape[1] == GRID * GRID + 1:
@@ -70,7 +73,10 @@ def main():
     ap.add_argument("--cds", type=int, default=8, help="downscale карты-результата")
     ap.add_argument("--bs", type=int, default=64)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--stain-ref", default=None,
+                    help="npz эталона окраски, тот же что при seg_extract.py")
     args = ap.parse_args()
+    norm = slide_normalizer(args.svs, args.stain_ref) if args.stain_ref else None
 
     import openslide
     device = get_device()
@@ -99,7 +105,7 @@ def main():
         nonlocal arrs, pos, done
         if not arrs:
             return
-        probs = run_batch(uni, dec, arrs, device)
+        probs = run_batch(uni, dec, arrs, device, norm)
         for k, (yc, xc) in enumerate(pos):
             pm = probs[k].transpose(1, 2, 0)
             pm = np.asarray(Image.fromarray((pm * 255).astype(np.uint8)).resize((pp, pp))) / 255.0
