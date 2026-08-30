@@ -28,11 +28,23 @@ CLASSES2 = ("hormonal", "matrix", "immune", "other")
 L2_CAF = {2: 0, 3: 0, 4: 1, 5: 2}
 CLASSES2_CAF = ("caf", "immune", "other")
 
-MERGE_CAF = False
+# режим --caf-only: только два типа CAF, иммунные и прочие уходят в NA
+L2_CAFONLY = {2: 0, 3: 1}
+CLASSES2_CAFONLY = ("hormonal", "matrix")
+
+MODE = "full"          # full | merge-caf | caf-only
+
+
+def _maps():
+    if MODE == "merge-caf":
+        return L2_CAF, CLASSES2_CAF
+    if MODE == "caf-only":
+        return L2_CAFONLY, CLASSES2_CAFONLY
+    return L2, CLASSES2
 
 
 def to_layer2(label):
-    mp = L2_CAF if MERGE_CAF else L2
+    mp = _maps()[0]
     y = np.full(len(label), -100, np.int64)
     for code, ch in mp.items():
         y[label == code] = ch
@@ -61,7 +73,7 @@ def load_all(graph_dir, slides):
 
 
 def active_classes():
-    return CLASSES2_CAF if MERGE_CAF else CLASSES2
+    return _maps()[1]
 
 
 def metrics(pred, truth):
@@ -94,11 +106,14 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--merge-caf", action="store_true",
                     help="гормональную+матриксную слить в один класс caf")
+    ap.add_argument("--caf-only", action="store_true",
+                    help="только гормональная и матриксная строма, иммунные и прочие в NA")
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
-    global MERGE_CAF
-    MERGE_CAF = args.merge_caf
+    global MODE
+    MODE = ("caf-only" if args.caf_only else
+            "merge-caf" if args.merge_caf else "full")
     CLS = active_classes()
     NC = len(CLS)
 
@@ -164,8 +179,12 @@ def main():
         m = metrics(pred, yva)
         vals = [m[CLS[c]][0] for c in present if not np.isnan(m[CLS[c]][0])]
         miou = float(np.mean(vals)) if vals else float("nan")
-        if miou > best:
-            best, best_ep, bad = miou, ep, 0
+        # отбор по худшему классу: модель тут норовит схлопнуться в один
+        # класс, и у такой константы средний IoU выше, чем у слабой, но
+        # настоящей модели. По минимуму константа получает ноль и выбывает
+        score = float(np.min(vals)) if vals else float("nan")
+        if score > best:
+            best, best_ep, bad = score, ep, 0
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
             mark = " *best*"
         else:
@@ -173,10 +192,11 @@ def main():
             mark = ""
         if ep % 20 == 0 or mark:
             per = "  ".join("%s %.3f" % (CLS[c], m[CLS[c]][0]) for c in present)
-            print("epoch %3d  loss %.4f  IoU: %s  (mIoU %.3f)%s"
-                  % (ep, float(loss.detach()), per, miou, mark))
+            print("epoch %3d  loss %.4f  IoU: %s  (mIoU %.3f, min %.3f)%s"
+                  % (ep, float(loss.detach()), per, miou, score, mark))
         if bad >= args.patience:
-            print("early stop на", ep, "| лучший mIoU %.3f (эпоха %d)" % (best, best_ep))
+            print("early stop на", ep,
+                  "| лучший min IoU %.3f (эпоха %d)" % (best, best_ep))
             break
 
     model.load_state_dict(best_state)
