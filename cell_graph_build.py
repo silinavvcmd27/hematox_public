@@ -51,7 +51,8 @@ def main():
     if "cell_type" not in df.columns:
         raise SystemExit(f"нет колонки cell_type; есть: {list(df.columns)}")
     mapper = CellTypeMapper(args.map)
-    df["zone"] = mapper.map_series(df["cell_type"])
+    sub_col = df["cell_subtype"] if "cell_subtype" in df.columns else None
+    df["zone"] = mapper.map_series(df["cell_type"], sub_col)
     name2cls = {CLASS_NAMES[c]: c for c in TRAIN_CLASSES}
     df["cls"] = df["zone"].map(name2cls)
     df = df.dropna(subset=["cls", "x", "y"]).copy()

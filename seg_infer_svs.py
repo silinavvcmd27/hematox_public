@@ -22,6 +22,10 @@ from seg_decoder import SegDecoder
 
 GRID = 14
 COL = np.array([[220, 50, 47], [38, 139, 210]], np.uint8)
+ZONE_NAMES = {1: "опухоль", 2: "гормональная строма", 3: "матриксная строма",
+              4: "иммунные", 5: "сосуды и прочее"}
+ZONE_COL = {1: (220, 50, 47), 2: (255, 165, 0), 3: (38, 139, 210),
+            4: (42, 161, 82), 5: (128, 128, 128)}
 _tf = T.Compose([T.Resize(224), T.CenterCrop(224), T.ToTensor(),
                  T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
@@ -43,10 +47,14 @@ def load_decoder(path, device):
     dec = SegDecoder(in_dim=1024, n_classes=n_classes).to(device)
     dec.load_state_dict(ckpt["state_dict"])
     dec.eval()
-    # каналы, в которых модель держит опухоль и строму
-    tumor, stroma = (0, 1) if n_classes == 2 else (1, 2)
-    print(f"декодер на {n_classes} класса, каналы опухоль/строма: {tumor}/{stroma}")
-    return dec, n_classes, tumor, stroma
+    c2c = ckpt.get("channel_to_class")
+    if c2c:
+        ch2cls = [int(c2c[k]) for k in sorted(c2c, key=int)]
+    else:
+        ch2cls = [1, 2] if n_classes == 2 else [0, 1, 2]   # старая схема с фоном
+    print("декодер на %d класса, каналы: %s" % (n_classes, ", ".join(
+        "%d=%s" % (i, ZONE_NAMES.get(c, "не размечено")) for i, c in enumerate(ch2cls))))
+    return dec, n_classes, ch2cls
 
 
 @torch.no_grad()
@@ -75,6 +83,14 @@ def main():
     ap.add_argument("--out", default=None)
     ap.add_argument("--stain-ref", default=None,
                     help="npz эталона окраски, тот же что при seg_extract.py")
+    ap.add_argument("--smooth", type=float, default=2.0,
+                    help="сглаживание карты вероятностей, 0 выключает")
+    ap.add_argument("--white", type=int, default=225,
+                    help="ярче этого считаем стеклом, а не тканью")
+    ap.add_argument("--min-region", type=int, default=2000,
+                    help="выбрасывать изолированные пятна мельче этого, 0 выключает")
+    ap.add_argument("--no-prob", dest="save_prob", action="store_false",
+                    help="не сохранять вероятности, они нужны только для подбора вида")
     args = ap.parse_args()
     norm = slide_normalizer(args.svs, args.stain_ref) if args.stain_ref else None
 
@@ -82,7 +98,7 @@ def main():
     device = get_device()
     print("device:", device)
     uni = build_uni(device)
-    dec, n_classes, TUMOR, STROMA = load_decoder(args.model, device)
+    dec, n_classes, ch2cls = load_decoder(args.model, device)
 
     sl = openslide.OpenSlide(args.svs)
     mpp = float(sl.properties.get("openslide.mpp-x", 0.5) or 0.5)
@@ -130,17 +146,49 @@ def main():
     flush()
     print(f"\nвсего патчей: {done}")
 
-    # приводим к единой кодировке: 0 не размечено, 1 опухоль, 2 строма
-    covered = acc.sum(2) > 0
+    # 0 не размечено, дальше коды зон из src/utils
+    covered = acc.sum(2) > 0          # считаем до сглаживания, иначе фон расползётся
+    raw = acc                         # несглаженное идёт в npz, для перерисовки
+    if args.smooth > 0:
+        # каждый токен UNI классифицируется сам по себе, соседи спорят и карта
+        # получается крапчатой. Сглаживаем вероятности, а не готовые метки
+        from scipy.ndimage import gaussian_filter
+        acc = gaussian_filter(raw, (args.smooth, args.smooth, 0))
     arg = acc.argmax(2)
-    zones = np.zeros(arg.shape, np.uint8)
-    zones[covered & (arg == TUMOR)] = 1
-    zones[covered & (arg == STROMA)] = 2
+    lut = np.array(ch2cls, np.uint8)
+    zones = np.where(covered, lut[arg], 0).astype(np.uint8)
 
-    nt, ns = int((zones == 1).sum()), int((zones == 2).sum())
-    print(f"окном покрыто {100*covered.mean():.1f}% карты")
-    if nt + ns:
-        print(f"TSP: tumor {100*nt/(nt+ns):.1f}%  stroma {100*ns/(nt+ns):.1f}%")
+    # Обрезаем по настоящей ткани, а не по сетке окон: окно попадает на срез
+    # целиком или никак, поэтому край шёл ступеньками. Заодно выбрасываем
+    # изолированную мелочь, это пылинки и грязь на стекле
+    import cv2
+    tmb = np.asarray(sl.get_thumbnail((2000, 2000)).convert("RGB"))
+    tis = cv2.resize((tmb.mean(2) < args.white).astype(np.uint8),
+                     (zones.shape[1], zones.shape[0]),
+                     interpolation=cv2.INTER_NEAREST)
+    zones[tis == 0] = 0
+    if args.min_region > 0:
+        from scipy.ndimage import label
+        lab, _ = label(zones > 0)
+        sizes = np.bincount(lab.ravel())
+        zones[np.isin(lab, np.where(sizes < args.min_region)[0])] = 0
+    covered = zones > 0
+
+    print(f"размечено {100*covered.mean():.1f}% кадра")
+    present = [c for c in sorted(set(ch2cls)) if c]
+    counts = {c: int((zones == c).sum()) for c in present}
+    total = sum(counts.values())
+    for c in present:
+        print("  %-20s %5.1f%%" % (ZONE_NAMES.get(c, c),
+                                   100 * counts[c] / total if total else 0))
+    tum = counts.get(1, 0)
+    stroma = sum(counts.get(c, 0) for c in (2, 3, 5))
+    if tum + stroma:
+        print("TSR (строма / опухоль+строма): %.3f" % (stroma / (tum + stroma)))
+    horm, matr = counts.get(2, 0), counts.get(3, 0)
+    if horm + matr:
+        print("состав стромы: гормональная %.1f%%, матриксная %.1f%%"
+              % (100 * horm / (horm + matr), 100 * matr / (horm + matr)))
 
     # Превью: берём маленький thumbnail, как seg_infer.py берёт нижний уровень
     # пирамиды. Иначе карта классов (cds=8) даёт видимые блоки и файл в десятки МБ.
@@ -150,17 +198,55 @@ def main():
     zr = cv2.resize(zones, (thumb.shape[1], thumb.shape[0]), interpolation=cv2.INTER_NEAREST)
     ov = thumb.copy()
     alpha = 0.45
-    for c, col in ((1, COL[0]), (2, COL[1])):
+    for c in present:
         mask = zr == c
-        ov[mask] = (alpha * col + (1 - alpha) * thumb[mask]).astype(np.uint8)
+        if mask.any():
+            col = np.array(ZONE_COL[c], np.float32)
+            ov[mask] = (alpha * col + (1 - alpha) * thumb[mask]).astype(np.uint8)
+
+    edge = np.zeros(zr.shape, bool)
+    edge[:-1] |= zr[:-1] != zr[1:]
+    edge[:, :-1] |= zr[:, :-1] != zr[:, 1:]
+    edge &= zr > 0
+    ov[edge] = (0.55 * ov[edge]).astype(np.uint8)
 
     out = args.out or str(ensure_dir("outputs/results") / (Path(args.svs).stem + "_seg_map.png"))
-    Image.fromarray(np.concatenate([thumb, ov], 1)).save(out, optimize=True)
+    from PIL import ImageDraw, ImageFont
+    # встроенный шрифт PIL растровый и без кириллицы, подписи выходят пустыми
+    font = None
+    for fp in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+               "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+               "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"):
+        if Path(fp).exists():
+            font = ImageFont.truetype(fp, 28)
+            break
+    if font is None:
+        try:
+            import matplotlib
+            font = ImageFont.truetype(str(Path(matplotlib.__file__).parent /
+                                          "mpl-data/fonts/ttf/DejaVuSans.ttf"), 28)
+        except Exception:
+            font = ImageFont.load_default()
+
+    panel = Image.fromarray(np.concatenate([thumb, ov], 1))
+    d = ImageDraw.Draw(panel)
+    lx, ly, step = thumb.shape[1] + 20, 20, 40
+    d.rectangle([lx - 12, ly - 12, lx + 430, ly + step * len(present)],
+                fill=(255, 255, 255), outline=(120, 120, 120))
+    for c in present:
+        d.rectangle([lx, ly, lx + 28, ly + 28], fill=ZONE_COL[c], outline=(0, 0, 0))
+        d.text((lx + 40, ly + 2), ZONE_NAMES.get(c, str(c)), fill=(0, 0, 0), font=font)
+        ly += step
+    panel.save(out, optimize=True)
 
     # карта классов нужна, чтобы пересчитывать TSR по разным областям
     # без повторного прогона UNI; mpp — микрометры на пиксель этой карты
     npz = Path(out).with_suffix(".npz")
-    np.savez_compressed(npz, cls=zones, mpp=eff * cds)
+    saved = {"cls": zones, "ch2cls": np.array(ch2cls, np.uint8),
+             "mpp": eff * cds}
+    if args.save_prob:
+        saved["prob"] = raw.astype(np.float16)
+    np.savez_compressed(npz, **saved)
 
     sl.close()
     print("карта зон:", out)

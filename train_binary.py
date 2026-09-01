@@ -25,7 +25,7 @@ COLORS = np.array([[220, 50, 47], [38, 139, 210]]) / 255.0
 HE_DEFAULT = {
     "ovary_prime_he": "data/raw/ovary_prime/Xenium_Prime_Ovarian_Cancer_FFPE_XRrun_he_image.ome.tif",
     "ovary2_he": "data/raw/ovary2/Xenium_Prime_Human_Ovary_FF_he_image.ome.tif",
-    "ovary3_he": "data/raw/ovary3/Xenium_V1_Human_Ovary_Cancer_FF_he_image.ome.tif",
+    "ovary3_he": "data/raw/ovary3/Xenium_Prime_Human_Ovary_Cancer_FF_he_image.ome.tif",
 }
 
 

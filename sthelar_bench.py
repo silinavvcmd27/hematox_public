@@ -43,6 +43,12 @@ GT_CMP = {"Fibroblast_Myofibroblast": CMP_CAF, "T_NK": CMP_IMM, "B_Plasma": CMP_
           "Myeloid": CMP_IMM, "Blood_vessel": CMP_VAS}
 CMPNAME = {CMP_CAF: "CAF", CMP_IMM: "immune", CMP_VAS: "vascular"}
 
+# Тайл STHELAR это 256 px при 0.25 мкм/px, то есть 64 мкм. Граф строится
+# с рёбрами до 50 мкм и двумя слоями, ему нужно около 100 мкм вокруг
+# клетки, и на таком тайле контекст обрезан краями кадра. Если провал
+# идёт отсюда, он должен быть сильнее на смешанных тайлах
+MIXCONF = {}
+
 
 def decode_img(v):
     """image-колонка parquet: HF-структура {bytes,path} или сырые байты."""
@@ -147,6 +153,21 @@ def report_l1(conf, tag):
     print(f"  tumor Dice {dt:.3f} | stroma Dice {ds:.3f} | accuracy {(tt+ss)/n:.3f}")
 
 
+def report_stroma(conf, tag):
+    """Из чего на самом деле состоит то, что модель назвала стромой.
+    Компартменты целиком проверить нельзя: второй слой в режиме caf-only
+    умеет называть только CAF, а STHELAR не отличает гормональную строму
+    от матриксной, у него разметка кончается на уровне фибробластов."""
+    row = conf[0]                     # строка CAF: то, что названо стромой
+    n = int(row.sum())
+    if not n:
+        print(f"\n=== {tag}: стромальных клеток нет ===")
+        return
+    print(f"\n=== {tag}: состав предсказанной стромы (по клеткам, N={n}) ===")
+    for j, c in enumerate((CMP_CAF, CMP_IMM, CMP_VAS)):
+        print(f"  {CMPNAME[c]:8s} {100 * int(row[j]) / n:5.1f}%")
+
+
 def report_cmp(conf, tag):
     n = int(conf.sum())
     if not n:
@@ -236,6 +257,11 @@ def main():
             xy, p1, g1, pc, gcmp = res
             for a, b in zip((p1 == 1).astype(int), (g1 == STR).astype(int)):
                 c1[s][a, b] += 1
+            frac = float((g1 == STR).mean())
+            key = "однородные" if frac < 0.15 or frac > 0.85 else "смешанные"
+            MIXCONF.setdefault(key, np.zeros((2, 2), np.int64))
+            for a, b in zip((p1 == 1).astype(int), (g1 == STR).astype(int)):
+                MIXCONF[key][a, b] += 1
             stc = gcmp > 0
             for a, b in zip(pc[stc], gcmp[stc]):
                 ccmp[s][a - 1, b - 1] += 1
@@ -245,9 +271,12 @@ def main():
         print(f"  собрано: { {s: got[s] for s in SLIDES} }")
 
     for s in SLIDES:
-        report_l1(c1[s], s); report_cmp(ccmp[s], s)
+        report_l1(c1[s], s); report_stroma(ccmp[s], s)
     report_l1(sum(c1.values()), "ИТОГО ovary")
-    report_cmp(sum(ccmp.values()), "ИТОГО ovary")
+    report_stroma(sum(ccmp.values()), "ИТОГО ovary")
+    for key in ("однородные", "смешанные"):
+        if key in MIXCONF:
+            report_l1(MIXCONF[key], "тайлы " + key)
     os._exit(0)  # обойти сегфолт datasets+torch при финализации
 
 

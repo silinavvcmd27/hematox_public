@@ -9,9 +9,9 @@ import torchvision.transforms as T
 from PIL import Image
 
 from src.utils import (get_device, hf_login, ensure_dir, CLASS_NAMES,
-from src.stain import slide_normalizer
                        TRAIN_CLASSES, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
                        IMMUNE, STROMA, STROMA_FOR_TSR, IGNORE, CLASS_COLORS)
+from src.stain import slide_normalizer
 from src.data.patching import load_image
 from seg_decoder import SegDecoder
 

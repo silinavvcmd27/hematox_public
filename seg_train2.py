@@ -19,17 +19,31 @@ COL = np.array([
     [128, 128, 128],
 ], np.uint8)
 
-CHANNEL_TO_CLASS = {i: c for i, c in enumerate(TRAIN_CLASSES)}
-CLASS_TO_CHANNEL = {c: i for i, c in CHANNEL_TO_CLASS.items()}
-CLASSES = tuple((CLASS_NAMES[c], i) for i, c in CHANNEL_TO_CLASS.items())
 IGNORE_TARGET = -100
+CHANNEL_TO_CLASS = CLASS_TO_CHANNEL = CLASSES = None
+N_TRAIN = 0
+
+
+def set_classes(classes):
+    """Какие зоны учим. Маски пересобирать не надо: признаки от разметки не
+    зависят, меняется только отображение меток в цели."""
+    global CHANNEL_TO_CLASS, CLASS_TO_CHANNEL, CLASSES, N_TRAIN
+    CHANNEL_TO_CLASS = {i: c for i, c in enumerate(classes)}
+    CLASS_TO_CHANNEL = {c: i for i, c in CHANNEL_TO_CLASS.items()}
+    CLASSES = tuple((CLASS_NAMES[c], i) for i, c in CHANNEL_TO_CLASS.items())
+    N_TRAIN = len(classes)
+
+
+set_classes(TRAIN_CLASSES)
 
 
 def mask_to_target(mask):
+    """Зоны вне обучаемого набора уходят в игнор, а не в фон: класс, который мы
+    не предсказываем, не должен считаться ошибкой ни в лоссе, ни в метриках."""
     out = np.full(mask.shape, IGNORE_TARGET, np.int64)
     for cls, ch in CLASS_TO_CHANNEL.items():
         out[mask == cls] = ch
-    unknown = ~np.isin(mask, list(CLASS_TO_CHANNEL) + [0, IGNORE])
+    unknown = ~np.isin(mask, list(TRAIN_CLASSES) + [0, IGNORE])
     if unknown.any():
         raise ValueError(
             "в маске значения, которых нет ни в TRAIN_CLASSES, ни IGNORE: "
@@ -47,8 +61,8 @@ def class_weights(ys):
     target = mask_to_target(ys)
     flat = target.reshape(-1)
     flat = flat[flat != IGNORE_TARGET]
-    cnt = np.bincount(flat, minlength=N_CLASSES).astype(float)
-    w = cnt.sum() / (N_CLASSES * np.maximum(cnt, 1))
+    cnt = np.bincount(flat, minlength=N_TRAIN).astype(float)
+    w = cnt.sum() / (N_TRAIN * np.maximum(cnt, 1))
     return torch.tensor(w / w.mean(), dtype=torch.float32)
 
 
@@ -78,10 +92,12 @@ def evaluate(model, X, y, device, bs=32):
 def montage(y, pred, path, k=8):
     from PIL import Image
     idx = np.random.RandomState(0).choice(len(y), min(k, len(y)), replace=False)
+    # предсказание идёт в номерах каналов, а цвета заданы по кодам зон
+    lut = np.array([CHANNEL_TO_CLASS[ch] for ch in range(N_TRAIN)], np.uint8)
     rows = []
     for i in idx:
         gt_img = COL[np.clip(y[i], 0, len(COL) - 1)]
-        pr_img = COL[np.clip(pred[i] + 1, 0, len(COL) - 1)]
+        pr_img = COL[np.clip(lut[pred[i]], 0, len(COL) - 1)]
         rows.append(np.concatenate([gt_img, np.full((112, 6, 3), 255, np.uint8),
                                     pr_img], axis=1))
     grid = np.concatenate([np.concatenate([r, np.full((6, r.shape[1], 3), 255, np.uint8)])
@@ -114,9 +130,13 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--patience", type=int, default=15)
     ap.add_argument("--metrics-csv", default="outputs/results/seg2_metrics.csv")
+    ap.add_argument("--classes", nargs="+", type=int, default=list(TRAIN_CLASSES),
+                    help="коды зон для обучения, остальные размеченные уходят в игнор; "
+                         + ", ".join(f"{c}={CLASS_NAMES[c]}" for c in TRAIN_CLASSES))
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
+    set_classes(args.classes)
     set_seed(args.seed)
     device = get_device()
     full_train = args.val == "all"
@@ -139,9 +159,9 @@ def main():
     lab = (ytr > 0).mean()
     w = class_weights(ytr)
     print(f"размечено {100*lab:.1f}% пикселей | веса: "
-          + " ".join(f"{CLASS_NAMES[c]}={w[i]:.2f}" for i, c in enumerate(TRAIN_CLASSES)))
+          + " ".join(f"{CLASS_NAMES[c]}={w[i]:.2f}" for i, c in CHANNEL_TO_CLASS.items()))
 
-    model = SegDecoder(in_dim=Xtr.shape[-1], n_classes=N_CLASSES).to(device)
+    model = SegDecoder(in_dim=Xtr.shape[-1], n_classes=N_TRAIN).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     crit = nn.CrossEntropyLoss(weight=w.to(device), ignore_index=IGNORE_TARGET)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs, eta_min=1e-5)
@@ -173,8 +193,8 @@ def main():
             print("epoch %3d  loss %.4f  lr %.1e" % (ep, run / nb, lr_now))
         else:
             _, m = evaluate(model, Xva, yva, device)
-            present = [CLASS_NAMES[c] for c in TRAIN_CLASSES
-                       if c != 0 and (yva == c).sum() > 0]
+            present = [CLASS_NAMES[c] for c in CHANNEL_TO_CLASS.values()
+                       if (yva == c).sum() > 0]
             vals = [m[nm][0] for nm in present if nm in m and not np.isnan(m[nm][0])]
             miou = float(np.mean(vals)) if vals else float("nan")
             per = "  ".join(f"{nm} {m[nm][0]:.3f}" for nm in present if nm in m)
@@ -201,7 +221,7 @@ def main():
 
     ensure_dir(Path(args.out).parent)
     torch.save({"state_dict": model.state_dict(),
-                "n_classes": N_CLASSES,
+                "n_classes": N_TRAIN,
                 "channel_to_class": CHANNEL_TO_CLASS,
                 "class_names": CLASS_NAMES,
                 "val_slide": args.val,
@@ -226,6 +246,7 @@ def main():
 
         row = {
             "val_slide": args.val,
+            "classes": "+".join(CLASS_NAMES[c] for c in CHANNEL_TO_CLASS.values()),
             "seed": args.seed,
             "lr": args.lr,
             "best_epoch": best_ep,

@@ -16,7 +16,6 @@ from PIL import Image
 from src.utils import get_device, hf_login, ensure_dir
 from src.stain import slide_normalizer
 from src.utils import (IGNORE, BACKGROUND, TUMOR, STROMA_HORMONAL, STROMA_MATRIX,
-from src.stain import slide_normalizer
                        IMMUNE, STROMA, STROMA_FOR_TSR, CLASS_COLORS, CLASS_NAMES,
                        TRAIN_CLASSES)
 from seg_decoder import SegDecoder
