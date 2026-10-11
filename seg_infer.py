@@ -19,7 +19,6 @@ from src.utils import (IGNORE, BACKGROUND, TUMOR, STROMA_HORMONAL, STROMA_MATRIX
                        IMMUNE, STROMA, STROMA_FOR_TSR, CLASS_COLORS, CLASS_NAMES,
                        TRAIN_CLASSES)
 from seg_decoder import SegDecoder
-from stain_norm import MacenkoNormalizer
 
 GRID = 14
 Image.MAX_IMAGE_PIXELS = None
@@ -158,9 +157,6 @@ def main():
     ap.add_argument("--bs", type=int, default=64)
     ap.add_argument("--min-confidence", type=float, default=0.5,
                     help="ниже этой вероятности пиксель не размечен и в TSR не идёт")
-    ap.add_argument("--stain-norm", choices=["macenko", "none"], default="macenko")
-    ap.add_argument("--stain-ref", default=None,
-                    help="картинка-эталон окраски; без неё берётся табличный эталон")
     ap.add_argument("--out", default=None)
     ap.add_argument("--stain-ref", default=None,
                     help="npz эталона окраски, тот же что при seg_extract.py")
@@ -172,15 +168,6 @@ def main():
     print("device:", device)
     uni = build_uni(device)
     dec, n_classes, ch2cls = load_decoder(args.model, device)
-
-    norm = None
-    if args.stain_norm == "macenko":
-        norm = MacenkoNormalizer()
-        if args.stain_ref:
-            norm.fit(np.asarray(Image.open(args.stain_ref).convert("RGB")))
-            print("эталон окраски:", args.stain_ref)
-        else:
-            print("эталон окраски: табличный (Macenko)")
 
     sl = SlideReader(args.slide, args.target_mpp, args.mpp)
     print(f"{sl.kind}: {sl.W}x{sl.H} на {sl.mpp:.3f} мкм/px "
@@ -315,7 +302,7 @@ def main():
     npz = Path(out).with_suffix(".npz")
     np.savez_compressed(npz, cls=zones, mpp=sl.mpp * cds,
                         min_confidence=args.min_confidence,
-                        stain_norm=args.stain_norm, model=str(args.model))
+                        stain_norm=args.stain_ref or "none", model=str(args.model))
     sl.close()
     print("карта зон:", out)
     print("карта классов:", npz)

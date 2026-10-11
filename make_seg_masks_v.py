@@ -11,6 +11,7 @@ CLS = {
     "stroma_matrix": 3,
     "immune": 4,
     "stroma": 5,
+    "undefined": 6,
 }
 
 COL = np.array([

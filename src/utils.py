@@ -32,7 +32,7 @@ CLASS_TO_IDX = {v: k for k, v in CLASS_NAMES.items() if k not in (BACKGROUND, IG
 
 # Классы, которые участвуют в обучении декодера (без background и undefined).
 # undefined исключён через ignore_index, background — через маску Вороного.
-TRAIN_CLASSES = [TUMOR, STROMA_HORMONAL, STROMA_MATRIX, IMMUNE, STROMA]
+TRAIN_CLASSES = [TUMOR, STROMA_HORMONAL, STROMA_MATRIX, IMMUNE, STROMA, UNDEFINED]
 N_CLASSES = len(TRAIN_CLASSES)
 
 # Какие классы суммируются в знаменатель TSR.

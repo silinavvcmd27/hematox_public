@@ -18,11 +18,6 @@ subtype_groups:
   - C7+ CAFs
   - C7+ CAFs 1
   - C7+ CAFs 2
-  - C7+ NFs
-  - IL6+ C7+ NFs
-  - MFAP5+ C7+ NFs
-  - SFRP4+ NFs
-  - Granulosa cells
   stroma_matrix:
   - Other CAFs
   - cl-mCAFs 1
@@ -40,13 +35,23 @@ subtype_groups:
   - prolifCAFs
   - CST1+ CAFs
   - NOTCH3+ mCAFs
+  - cl-mCAFs
+  - infCAFs
+  undefined:
+  # нормальная ткань яичника и трубы: раньше лежала в гормональной строме
+  - Granulosa cells
+  - C7+ NFs
+  - IL6+ C7+ NFs
+  - MFAP5+ C7+ NFs
+  - SFRP4+ NFs
   - Boarder tumor NFs
-  stroma:
   - SMC 1
   - SMC 2
   - SMC 3
   - SMC 4
   - Vascular SMC
+  - Mesothelial cells
+  # сосуды и перициты
   - Pery 1
   - Pery 2
   - Pery 3
@@ -64,8 +69,7 @@ subtype_groups:
   - Other EC
   - Proliferatice EC_pery
   - Lymphatic EC
-  - Mesothelial cells
-  immune:
+  # иммунные
   - T cells CD4
   - T cells CD8
   - Tregs
@@ -83,17 +87,12 @@ subtype_groups:
   - pDC
   - Mast cells
   - Neutrophils
-  undefined:
   - Hs
 groups:
   tumor:
   - Cancer cells
   - Malignant Cells Lining Cyst
   stroma_hormonal:
-  - Granulosa cells
-  - Theca cells
-  - Luteinized cells
-  - Steroidogenic cells
   - CYP11A1+ fibroblasts
   - STAR+ C7+ CAFs 2 (SFRP1)
   - STAR+ C7+ CAFs 1 (SFRP1)
@@ -109,11 +108,10 @@ groups:
   - C7+ CAFs
   - C7+ CAFs 1
   - C7+ CAFs 2
-  - C7+ NFs
-  - IL6+ C7+ NFs
-  - MFAP5+ C7+ NFs
-  - SFRP4+ NFs
   stroma_matrix:
+  # ВНИМАНИЕ: две строки ниже это общий cell_type без подтипа. На ovary2 под
+  # меткой Fibroblasts лежит 27826 клеток, почти треть матриксной группы.
+  # Для прогона-абляции закомментировать обе.
   - CAFs
   - Fibroblasts
   - Other CAFs
@@ -132,9 +130,28 @@ groups:
   - prolifCAFs
   - CST1+ CAFs
   - NOTCH3+ mCAFs
-  - Boarder tumor NFs
-  stroma:
+  undefined:
+  # нормальная ткань яичника и трубы
+  - Granulosa cells
+  - Theca cells
+  - Luteinized cells
+  - Steroidogenic cells
   - NFs
+  - C7+ NFs
+  - IL6+ C7+ NFs
+  - MFAP5+ C7+ NFs
+  - SFRP4+ NFs
+  - Boarder tumor NFs
+  - SMC
+  - SMC 1
+  - SMC 2
+  - SMC 3
+  - SMC 4
+  - Vascular SMC
+  - Mesothelial cells
+  - Fallopian tube epithelium
+  - Ciliated epithelial cells
+  # сосуды и перициты
   - EC cells tumor
   - EC cells normal
   - Endo
@@ -144,12 +161,6 @@ groups:
   - Pery normal
   - Perycites
   - Pericytes
-  - SMC
-  - SMC 1
-  - SMC 2
-  - SMC 3
-  - SMC 4
-  - Vascular SMC
   - Pery 1
   - Pery 2
   - Pery 3
@@ -165,8 +176,7 @@ groups:
   - Other EC
   - Proliferatice EC_pery
   - Lymphatic EC
-  - Mesothelial cells
-  immune:
+  # иммунные
   - T cells
   - B cells
   - NK
@@ -195,7 +205,4 @@ groups:
   - DC immature
   - pDC
   - Neutrophils
-  undefined:
-  - Ciliated epithelial cells
-  - Fallopian tube epithelium
   - Hs

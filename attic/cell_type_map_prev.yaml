@@ -1,0 +1,155 @@
+# 6-class cell type mapping for ovarian cancer segmentation
+# tumor / stroma_hormonal / stroma_matrix / immune / stroma / undefined
+#
+# Two-tier matching:
+#   1. cell_subtype -> subtype_groups (exact match, priority)
+#   2. cell_type -> groups (exact match, fallback)
+#   3. unmapped -> unmapped_policy
+
+match_mode: exact
+case_insensitive: true
+unmapped_policy: undefined
+
+# === SUBTYPES: exact match (priority over groups) ===
+subtype_groups:
+
+  # Hormone-producing stroma — all C7+, STAR+, CYP11A1+
+  stroma_hormonal:
+    - CYP11A1+ fibroblasts
+    - STAR+ C7+ CAFs 2 (SFRP1)
+    - STAR+ C7+ CAFs 1 (SFRP1)
+    - STAR+ C7+ CAFs 3 (SFRP4)
+    - CPXM2+ C7+ CAFs (SFRP1)
+    - C7+ CAFs (SFRP1)
+    - NOTCH3+ C7+ CAFs (SFRP1)
+    - C7+ CAFs (SFRP4)
+    - C7+ CAFs (SFRP4/SFRP1)
+    - STAR+ C7+ CAFs 2
+    - STAR+ C7+ CAFs 1
+    - MYLK+ C7+ CAFs
+    - C7+ CAFs
+    - C7+ CAFs 1
+    - C7+ CAFs 2
+    - C7+ NFs
+    - IL6+ C7+ NFs
+    - MFAP5+ C7+ NFs
+    - SFRP4+ NFs
+    - Granulosa cells
+
+  # Matrix-producing stroma — classical CAFs without C7+/STAR+
+  stroma_matrix:
+    - Other CAFs
+    - cl-mCAFs 1
+    - cl-mCAFs 2
+    - CCL11+ cl-mCAFs
+    - tmCAFs
+    - iapCAFs
+    - apCAFs 1
+    - apCAFs 2
+    - tCAFs
+    - tCAFs 2
+    - infCAFs 1
+    - infCAFs 2
+    - hypCAFs
+    - prolifCAFs
+    - CST1+ CAFs
+    - NOTCH3+ mCAFs
+    - Boarder tumor NFs
+
+  # General stroma: vessels, pericytes, SMC, mesothelium
+  stroma:
+    - SMC 1
+    - SMC 2
+    - SMC 3
+    - SMC 4
+    - Vascular SMC
+    - Pery 1
+    - Pery 2
+    - Pery 3
+    - Pery 4
+    - Pericytes
+    - Perycites
+    - Pericytes (tumor) 1
+    - Pericytes (tumor) muscle-like
+    - Pericytes (tumor) fibroblasts-like
+    - Arterial EC
+    - Venous EC
+    - HEV
+    - KDR+ EC
+    - Capillary EC
+    - Other EC
+    - Proliferatice EC_pery
+    - Lymphatic EC
+    - Mesothelial cells
+
+  # Immune cells
+  immune:
+    - T cells CD4
+    - T cells CD8
+    - Tregs
+    - NK cells
+    - B cells mature
+    - B cells naive
+    - Plasma cells IgG
+    - Plasma cells IgA
+    - Macrophages M1
+    - Macrophages M2
+    - Monocytes
+    - Proliferative lymphoid cells
+    - DC mature
+    - DC immature
+    - pDC
+    - Mast cells
+    - Neutrophils
+
+  undefined:
+    - Hs
+
+# === COARSE TYPES: fallback if subtype not found above ===
+groups:
+  tumor:
+    - Cancer cells
+    - Malignant Cells Lining Cyst
+
+  stroma_hormonal:
+    - Granulosa cells
+    - Theca cells
+    - Luteinized cells
+    - Steroidogenic cells
+
+  stroma_matrix:
+    - CAFs
+    - Fibroblasts
+
+  stroma:
+    - NFs
+    - EC cells tumor
+    - EC cells normal
+    - Endo
+    - Endothelial cells
+    - Lymphatic endothelial cells
+    - Pery tumor
+    - Pery normal
+    - Perycites
+    - Pericytes
+    - SMC
+
+  immune:
+    - T cells
+    - B cells
+    - NK
+    - Lymph
+    - Lymphoid cells
+    - Plasma cells
+    - Plasma
+    - Myeloid cells
+    - Mye
+    - DC
+    - Mast cells
+    - macrophages
+    - monocytes
+
+  undefined:
+    - Ciliated epithelial cells
+    - Fallopian tube epithelium
+    - Mesothelial cells

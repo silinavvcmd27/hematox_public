@@ -23,9 +23,9 @@ from seg_decoder import SegDecoder
 GRID = 14
 COL = np.array([[220, 50, 47], [38, 139, 210]], np.uint8)
 ZONE_NAMES = {1: "опухоль", 2: "гормональная строма", 3: "матриксная строма",
-              4: "иммунные", 5: "сосуды и прочее"}
+              4: "иммунные", 5: "строма", 7: "прочее"}
 ZONE_COL = {1: (220, 50, 47), 2: (255, 165, 0), 3: (38, 139, 210),
-            4: (42, 161, 82), 5: (128, 128, 128)}
+            4: (42, 161, 82), 5: (128, 128, 128), 7: (235, 200, 40)}
 _tf = T.Compose([T.Resize(224), T.CenterCrop(224), T.ToTensor(),
                  T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
@@ -74,7 +74,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--svs", required=True)
     ap.add_argument("--model", required=True)
-    ap.add_argument("--target-mpp", type=float, default=0.27,
+    ap.add_argument("--target-mpp", type=float, default=0.2738,
                     help="масштаб, на котором обучалась модель")
     ap.add_argument("--patch-size", type=int, default=256)
     ap.add_argument("--stride", type=int, default=256)
@@ -107,12 +107,20 @@ def main():
     ldown = sl.level_downsamples[level]
     Wl, Hl = sl.level_dimensions[level]
     eff = mpp * ldown
-    print(f"mpp0={mpp:.3f} level={level} (~{eff:.2f} мкм/px) размер {Wl}x{Hl}")
-    if eff > 1.5 * args.target_mpp:
-        print("  внимание: подходящего уровня нет, масштаб заметно грубее обучающего")
-
     ps, st, cds = args.patch_size, args.stride, args.cds
-    Hc, Wc = Hl // cds, Wl // cds
+    # Окно читается с уровня пирамиды и приводится точно к масштабу обучения, как
+    # патчи IGNITE и NCT-CRC: на 40x 278 px уровня сжимаются в 256, на 20x 140 px
+    # растягиваются до 256. Раньше бралось 256 px уровня как есть, и срез 20x
+    # модель видела вдвое мельче. Окна и карта дальше считаются в пикселях модели
+    scale = args.target_mpp / eff
+    rs = round(ps * scale)
+    Wt, Ht = int(Wl / scale), int(Hl / scale)
+    print(f"mpp0={mpp:.3f} level={level} (~{eff:.2f} мкм/px) размер {Wl}x{Hl}, "
+          f"окно {rs} px уровня в {ps} px модели")
+    if eff > 1.5 * args.target_mpp:
+        print(f"  внимание: срез грубее обучающего, окно растягивается в {ps / rs:.1f} раза")
+
+    Hc, Wc = Ht // cds, Wt // cds
     acc = np.zeros((Hc, Wc, n_classes), np.float32)
     pp = ps // cds
     arrs, pos, done = [], [], 0
@@ -133,10 +141,11 @@ def main():
         arrs, pos = [], []
         print(f"  патчей: {done}", end="\r")
 
-    for y in range(0, Hl - ps, st):
-        for x in range(0, Wl - ps, st):
-            reg = np.asarray(sl.read_region((int(x * ldown), int(y * ldown)), level,
-                                            (ps, ps)).convert("RGB"))
+    for y in range(0, Ht - ps, st):
+        for x in range(0, Wt - ps, st):
+            reg = sl.read_region((int(x * scale * ldown), int(y * scale * ldown)), level,
+                                 (rs, rs)).convert("RGB")
+            reg = np.asarray(reg.resize((ps, ps), Image.BILINEAR) if rs != ps else reg)
             if (reg.mean(-1) > 220).mean() > 0.85:
                 continue
             arrs.append(reg)
@@ -243,7 +252,7 @@ def main():
     # без повторного прогона UNI; mpp — микрометры на пиксель этой карты
     npz = Path(out).with_suffix(".npz")
     saved = {"cls": zones, "ch2cls": np.array(ch2cls, np.uint8),
-             "mpp": eff * cds}
+             "mpp": args.target_mpp * cds}
     if args.save_prob:
         saved["prob"] = raw.astype(np.float16)
     np.savez_compressed(npz, **saved)

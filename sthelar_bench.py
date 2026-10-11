@@ -198,6 +198,41 @@ def save_overlay(img, xy, p1, g1, slide, k):
     Image.fromarray(np.asarray(canvas)).save(ensure_dir("outputs/sthelar") / f"{slide}_{k}.png")
 
 
+def fit_stains(shards, args):
+    """Окраска каждого среза по его же тайлам. Отдельный быстрый проход:
+    картинки декодируются, UNI не запускается."""
+    from src.stain import Normalizer, StainStats, fit_stats, sample_pixels
+
+    pool = {s: [] for s in SLIDES}
+    for i in shards:
+        if all(len(pool[s]) >= args.stain_tiles for s in SLIDES):
+            break
+        fn = f"data/train-{i:05d}-of-{N_SHARDS:05d}.parquet"
+        try:
+            path = hf_hub_download(REPO, fn, repo_type="dataset")
+        except Exception:
+            continue
+        tbl = pq.read_table(path)
+        sid = tbl.column("slide_id").to_pylist()
+        col = tbl.column("image")
+        for j, sl in enumerate(sid):
+            if sl in SLIDES and len(pool[sl]) < args.stain_tiles:
+                pool[sl].append(decode_img(col[j].as_py()))
+
+    ref = StainStats.load(args.stain_ref)
+    out = {}
+    for sl, tiles in pool.items():
+        if len(tiles) < 5:
+            print(f"{sl}: тайлов на оценку окраски мало, оставляю как есть")
+            continue
+        px = np.concatenate([t.reshape(-1, 3) for t in tiles], 0)
+        src = fit_stats(sample_pixels(px))
+        print(f"{sl}: окраска по {len(tiles)} тайлам,",
+              np.round(src.he.T, 3).tolist())
+        out[sl] = Normalizer(src, ref)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--layer1", default="runs/graph/l1_final.pth")
@@ -207,6 +242,12 @@ def main():
     ap.add_argument("--min-cells", type=int, default=12, help="минимум клеток на тайле")
     ap.add_argument("--shards", type=int, nargs="*", help="явные номера шардов (иначе 0..53)")
     ap.add_argument("--save-overlays", type=int, default=0, help="оверлеев на срез")
+    ap.add_argument("--stain-ref", default=None,
+                    help="npz эталона окраски, тот же что при seg_extract.py")
+    ap.add_argument("--stain-tiles", type=int, default=40,
+                    help="сколько тайлов брать на оценку окраски среза")
+    ap.add_argument("--overlay-disagree", type=float, default=0.0,
+                    help="сохранять оверлеи только там, где доля расхождений не ниже этой")
     args = ap.parse_args()
 
     device = get_device()
@@ -222,6 +263,8 @@ def main():
     got = {s: 0 for s in SLIDES}
     nov = {s: 0 for s in SLIDES}
     shards = args.shards if args.shards else range(N_SHARDS)
+
+    norms = fit_stains(shards, args) if args.stain_ref else {}
 
     for i in shards:
         if all(got[s] >= args.per_slide for s in SLIDES):
@@ -251,6 +294,8 @@ def main():
                 continue
             idmap = sp.load_npz(io.BytesIO(cid_col[j].as_py())).toarray()
             img = decode_img(img_col[j].as_py())
+            if s in norms:
+                img = norms[s](img)
             res = process_tile(img, idmap, luts[s], uni, l1, l2, device, args.min_cells)
             if res is None:
                 continue
@@ -259,13 +304,15 @@ def main():
                 c1[s][a, b] += 1
             frac = float((g1 == STR).mean())
             key = "однородные" if frac < 0.15 or frac > 0.85 else "смешанные"
+            key = f"{s}, {key}"
             MIXCONF.setdefault(key, np.zeros((2, 2), np.int64))
             for a, b in zip((p1 == 1).astype(int), (g1 == STR).astype(int)):
                 MIXCONF[key][a, b] += 1
             stc = gcmp > 0
             for a, b in zip(pc[stc], gcmp[stc]):
                 ccmp[s][a - 1, b - 1] += 1
-            if nov[s] < args.save_overlays:
+            disagree = float(((p1 == 1) != (g1 == STR)).mean())
+            if nov[s] < args.save_overlays and disagree >= args.overlay_disagree:
                 save_overlay(img, xy, p1, g1, s, nov[s]); nov[s] += 1
             got[s] += 1
         print(f"  собрано: { {s: got[s] for s in SLIDES} }")
@@ -274,9 +321,8 @@ def main():
         report_l1(c1[s], s); report_stroma(ccmp[s], s)
     report_l1(sum(c1.values()), "ИТОГО ovary")
     report_stroma(sum(ccmp.values()), "ИТОГО ovary")
-    for key in ("однородные", "смешанные"):
-        if key in MIXCONF:
-            report_l1(MIXCONF[key], "тайлы " + key)
+    for key in sorted(MIXCONF):
+        report_l1(MIXCONF[key], "тайлы " + key)
     os._exit(0)  # обойти сегфолт datasets+torch при финализации
 
 

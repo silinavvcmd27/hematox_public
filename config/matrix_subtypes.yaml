@@ -1,0 +1,75 @@
+# Метки второго слоя для срезов с готовой аннотацией подтипов (наши яичники).
+# Читает matrix_graph_build.py --labels. Сравнение без учёта регистра.
+#
+# matrix -> 1, other -> 0. Всё, чего нет в этих двух списках, получает -1 и в
+# метку окна не идёт, но клетка остаётся в графе и в окне как признак.
+#
+# Матриксными взяты только коллаген-продуцирующие подтипы. Специализированные
+# CAF из матриксной группы cell_type_map.yaml (ap, inf, t, hyp, prolif) в других
+# опухолях к матриксным не относят, поэтому они пока в unclear: если их считать
+# матриксными, в других органах придётся размечать так же широко.
+
+matrix:
+  - cl-mCAFs
+  - cl-mCAFs 1
+  - cl-mCAFs 2
+  - CCL11+ cl-mCAFs
+  - NOTCH3+ mCAFs
+  - tmCAFs
+
+other:
+  # гормональные CAF
+  - CYP11A1+ fibroblasts
+  - STAR+ C7+ CAFs 1 (SFRP1)
+  - STAR+ C7+ CAFs 2 (SFRP1)
+  - STAR+ C7+ CAFs 3 (SFRP4)
+  - CPXM2+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP1)
+  - NOTCH3+ C7+ CAFs (SFRP1)
+  - C7+ CAFs (SFRP4)
+  - C7+ CAFs (SFRP4/SFRP1)
+  - STAR+ C7+ CAFs 1
+  - STAR+ C7+ CAFs 2
+  - MYLK+ C7+ CAFs
+  - C7+ CAFs
+  - C7+ CAFs 1
+  - C7+ CAFs 2
+  # нормальные фибробласты: для «матриксная или нет» это честные отрицательные
+  # примеры, и модель учится не называть норму матриксной
+  - C7+ NFs
+  - IL6+ C7+ NFs
+  - MFAP5+ C7+ NFs
+  - SFRP4+ NFs
+  - Boarder tumor NFs
+  - NFs
+  - Theca cells
+  - Steroidogenic cells
+
+unclear:
+  - apCAFs 1
+  - apCAFs 2
+  - iapCAFs
+  - infCAFs
+  - infCAFs 1
+  - infCAFs 2
+  - tCAFs
+  - tCAFs 2
+  - hypCAFs
+  - prolifCAFs
+  - CST1+ CAFs
+  - Other CAFs
+  - CAFs
+  - Fibroblasts
+
+# Зона по cell_type или подтипу. Всё, что не tumor и не undefined, считается стромой:
+# фибробласты, иммунные, сосуды, мезотелий.
+zone:
+  tumor:
+    - Cancer cells
+    - Malignant Cells Lining Cyst
+  undefined:
+    - Ciliated epithelial cells
+    - Fallopian tube epithelium
+    - Granulosa cells
+    - Luteinized cells
+    - Hs

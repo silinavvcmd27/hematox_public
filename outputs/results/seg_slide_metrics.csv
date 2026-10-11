@@ -7,3 +7,5 @@ ovary2_he,outputs/models/seg_val_ovary2_he.pth,512,37.22,50.13,покрытое 
 ovary2_he,outputs/models/seg_val_ovary2_he.pth,512,37.22,50.13,внутри разметки,0.7761,0.7098,0.8303,0.5904,0.7425
 ovary3_he,outputs/models/seg_val_ovary3_he.pth,512,5.89,19.69,покрытое окном,0.4641,0.412,0.5836,0.0297,0.0577
 ovary3_he,outputs/models/seg_val_ovary3_he.pth,512,5.89,19.69,внутри разметки,0.5173,0.5486,0.7085,0.0323,0.0626
+ovary2_he,outputs/models/seg4_val_ov2_no6.pth,256,3,0.5,53.23,34.42,покрытое окном,0.4126,0.5794,0.7337,0.1591,0.2746,0.0755,0.1403,nan,nan,nan,nan,0.2713
+ovary2_he,outputs/models/seg4_val_ov2_no6.pth,256,3,0.5,53.23,34.42,внутри разметки,0.4915,0.6275,0.7711,0.2041,0.339,0.0834,0.1539,nan,nan,nan,nan,0.305
