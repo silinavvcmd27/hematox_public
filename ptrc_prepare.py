@@ -72,7 +72,15 @@ def main():
 
     t = read_xlsx(args.xlsx)
     t["ответ"] = t["Tumor response"].str.strip().str.lower()
-    t["неоадъювант"] = t["Neo-adjuvant"].str.strip().str.lower() == "yes"
+    # Неоадъювант получает пациентка, а не срез, но в таблице TCIA у двух пациенток отметка
+    # различается между срезами одного блока. При любой отметке «yes» пациентка считается
+    # получавшей неоадъювант (уточнение плана от 22.10.2026, до разметки).
+    t["неоадъювант_в_строке"] = t["Neo-adjuvant"].str.strip().str.lower() == "yes"
+    t["неоадъювант"] = t.groupby("Patient ID")["неоадъювант_в_строке"].transform("any")
+    разные = t.groupby("Patient ID")["неоадъювант_в_строке"].nunique()
+    if (разные > 1).any():
+        print("отметка о неоадъюванте различается между срезами у пациенток "
+              f"{', '.join(map(str, разные[разные > 1].index))}: считаются получавшими")
     t["Image ID"] = pd.to_numeric(t["Image ID"])
     t["срез_в_блоке"] = t.groupby("Sample ID")["Image ID"].rank(method="first").astype(int)
     t["очередь"] = t.неоадъювант.map({False: 1, True: 2})
