@@ -24,8 +24,9 @@ GRID = 14
 COL = np.array([[220, 50, 47], [38, 139, 210]], np.uint8)
 ZONE_NAMES = {1: "опухоль", 2: "гормональная строма", 3: "матриксная строма",
               4: "иммунные", 5: "строма", 7: "прочее"}
-ZONE_COL = {1: (220, 50, 47), 2: (255, 165, 0), 3: (38, 139, 210),
-            4: (42, 161, 82), 5: (128, 128, 128), 7: (235, 200, 40)}
+# опухоль, строма и прочее в тех же цветах, что на рисунках диплома и в hematox-tsr
+ZONE_COL = {1: (232, 105, 159), 2: (255, 165, 0), 3: (38, 139, 210),
+            4: (42, 161, 82), 5: (86, 180, 233), 7: (127, 194, 62)}
 _tf = T.Compose([T.Resize(224), T.CenterCrop(224), T.ToTensor(),
                  T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
 
@@ -91,6 +92,9 @@ def main():
                     help="выбрасывать изолированные пятна мельче этого, 0 выключает")
     ap.add_argument("--no-prob", dest="save_prob", action="store_false",
                     help="не сохранять вероятности, они нужны только для подбора вида")
+    ap.add_argument("--emulate-mpp", type=float, default=0,
+                    help="проверка на грубом скане: окно сжимается до этого мкм/px и "
+                         "растягивается обратно, как у среза 20x (0,5); 0 выключает")
     args = ap.parse_args()
     norm = slide_normalizer(args.svs, args.stain_ref) if args.stain_ref else None
 
@@ -119,6 +123,9 @@ def main():
           f"окно {rs} px уровня в {ps} px модели")
     if eff > 1.5 * args.target_mpp:
         print(f"  внимание: срез грубее обучающего, окно растягивается в {ps / rs:.1f} раза")
+    coarse = round(ps * args.target_mpp / args.emulate_mpp) if args.emulate_mpp > eff else 0
+    if coarse:
+        print(f"  имитация скана {args.emulate_mpp} мкм/px: окно сжимается до {coarse} px")
 
     Hc, Wc = Ht // cds, Wt // cds
     acc = np.zeros((Hc, Wc, n_classes), np.float32)
@@ -145,7 +152,9 @@ def main():
         for x in range(0, Wt - ps, st):
             reg = sl.read_region((int(x * scale * ldown), int(y * scale * ldown)), level,
                                  (rs, rs)).convert("RGB")
-            reg = np.asarray(reg.resize((ps, ps), Image.BILINEAR) if rs != ps else reg)
+            if coarse:
+                reg = reg.resize((coarse, coarse), Image.BOX)
+            reg = np.asarray(reg.resize((ps, ps), Image.BILINEAR) if rs != ps or coarse else reg)
             if (reg.mean(-1) > 220).mean() > 0.85:
                 continue
             arrs.append(reg)
