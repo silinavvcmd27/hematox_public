@@ -70,9 +70,13 @@ def field_tsr(tumor, stroma, cell_mm, radius_mm, min_cover, quantile):
     if min(tumor.shape) < 2 * r + 1:
         return None, None
     y, x = np.ogrid[-r:r + 1, -r:r + 1]
-    disc = (x * x + y * y <= r * r).astype(np.float32)
-    tum = fftconvolve(tumor.astype(np.float32), disc, mode="same")
-    stro = fftconvolve(stroma.astype(np.float32), disc, mode="same")
+    disc = (x * x + y * y <= r * r).astype(np.float64)
+    # В круге целое число точек карты, поэтому свёртка округляется до целых. В float32 без
+    # округления FFT давал вдали от ткани шум до 0,6 точки, условие total > 0 пропускало
+    # такие пустые круги, и их «доля стромы» (шум на шум, вплоть до минус миллионов)
+    # попадала в квантиль поля по строме (найдено 28.10.2026, tsr_field_check.py).
+    tum = np.rint(fftconvolve(tumor.astype(np.float64), disc, mode="same"))
+    stro = np.rint(fftconvolve(stroma.astype(np.float64), disc, mode="same"))
     total = tum + stro
     ok = total > 0
     share = np.where(ok, stro / np.where(ok, total, 1), np.nan)
